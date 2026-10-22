@@ -27,9 +27,10 @@ Boot arguments: on by default with `cpufreq=1`; `thermal=0` off; `thermal=2` wat
 The governor's decisions are tested on the computer in 11 scenarios (`tools/thermal-test/run.sh`, in CI): heat-up,
 cool-down without see-saw, a single hot group, package heat, near-critical, a one-tick spike, a sustained emergency,
 silent sensors, a hot battery, a configuration with one group of cores. The kernel builds with it and boots in QEMU
-(where it stays off: QEMU has no TSENS). **Not yet run on the phone**: the first run with `cpufreq=1` should be
-watched (`sysctl kern.redwood.thermal`) -- the sensor addresses and format are the ones `redwood_adreno.c` already
-reads the GPU's temperature with.
+(where it stays off: QEMU has no TSENS). **On the phone** (POCO X5 Pro, 22 October 2026, `cpufreq=1 cpus=8`, the
+cores at 1.8 / 2.4 / 2.4 GHz, one core kept busy for a minute and a half): all 27 sensors answered, 33..38 C, pressure
+nominal, nothing slowed -- as it should be at that heat. The governor has not yet been seen slowing the cores on the
+phone itself: that needs a load that heats it past 95 C.
 
 ## Sensors (accelerometer, gyroscope, compass, light, proximity, barometer)
 
