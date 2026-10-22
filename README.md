@@ -227,7 +227,7 @@ From the phone's screen, one session (`GL=1 REST=1`, `gpu=1`):
 - `uefi/files/Binaries/redwood` and `prebuilt/uefi/SILICIUM_UEFI.fd` contain UEFI drivers from the phone's
   Xiaomi firmware, distributed the way Project Silicium distributes them for other devices;
   `prebuilt/uefi/mkbootimg.py` — AOSP, Apache-2.0.
-- Our changes to XNU are APSL 2.0 (as a derivative of XNU). A license for the rest of our own code (loader, scripts) is not chosen yet: until a LICENSE file appears, all rights are reserved by OOSEX GANG.
+- This repository is licensed under the [Apple Public Source License 2.0](LICENSE): our changes to XNU are a derivative of XNU and must be, and our other code here (loader, scripts) is released under the same license. Third-party code keeps its own license, as listed above.
 
 ## Team
 

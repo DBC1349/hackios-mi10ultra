@@ -37,13 +37,13 @@ if [ ! -d .userland.git ]; then
 	# kernel repository's business; add a new userland file by name (common/ugit add PATH)
 	"${UG[@]}" config status.showUntrackedFiles no
 	cp common/userland.exclude .userland.git/info/exclude
-	# README.md and .gitignore at the top are the kernel repository's: the userland ones stay in git
+	# README.md, .gitignore and LICENSE at the top are the kernel repository's: the userland ones stay in git
 	# only (skip-worktree), every other file is written out
 	"${UG[@]}" read-tree -m HEAD
-	for f in README.md .gitignore; do
+	for f in README.md .gitignore LICENSE; do
 		"${UG[@]}" ls-files --error-unmatch "$f" > /dev/null 2>&1 && "${UG[@]}" update-index --skip-worktree "$f"
 	done
-	"${UG[@]}" ls-files -z | grep -zvxE 'README\.md|\.gitignore' | xargs -0 "${UG[@]}" checkout --
+	"${UG[@]}" ls-files -z | grep -zvxE 'README\.md|\.gitignore|LICENSE' | xargs -0 "${UG[@]}" checkout --
 else
 	echo "setup: hackios-xnu-userland already here, updating"
 	cp common/userland.exclude .userland.git/info/exclude
