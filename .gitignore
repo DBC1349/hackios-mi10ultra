@@ -42,6 +42,7 @@ __pycache__/
 /xnuloader/*
 !/xnuloader/build.sh
 !/xnuloader/efi.h
+!/xnuloader/flashboot.c
 !/xnuloader/identity.h
 !/xnuloader/loader.c
 !/xnuloader/mkidentity.py

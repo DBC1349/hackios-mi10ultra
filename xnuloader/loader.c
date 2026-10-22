@@ -3917,6 +3917,8 @@ ramfb_phone_screen(void)
 	SCREEN.stride = PHONE_WIDTH * 4;
 }
 
+#include "flashboot.c"
+
 efi_status EFIAPI
 efi_main(efi_handle image, efi_system_table *st)
 {
@@ -3962,7 +3964,10 @@ efi_main(efi_handle image, efi_system_table *st)
 	/* One-shot mode: run the kernel that came with the image, then reset. */
 	if (have_payload) {
 		run_kernel(0, 0);
+		reboot();
 	}
+	/* No payload: an installed device booting on its own -- the menu, the bundle from darwin, Android */
+	fb_standalone();
 	reboot();
 	return 0;
 }

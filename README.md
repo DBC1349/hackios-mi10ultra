@@ -117,6 +117,17 @@ XL_SECS=900 XL_CMDLINE="touchscreen=1 cpufreq=1 bootcpu=7 cpus=8 gpu=1 wifi=1 ad
 
 `./xl` with no arguments lists every command (logs, screen and sound recording, camera frames, stop, state...).
 
+## Install as a dual boot (no computer needed afterwards)
+
+HackiOS can live on the phone next to Android: the UEFI with our loader in the spare A/B slot, the kernel and the
+boot volume in darwin, a boot menu at power-on (HackiOS / Android / developer mode), sessions with no time limit.
+Android is never written, and fastboot always brings it back. See [docs/INSTALL.md](docs/INSTALL.md):
+
+```sh
+common/flash/install.sh redwood
+python3 common/flash/flashctl.py switch hackios
+```
+
 ## Prebuilt boot image
 
 Every release has `hackios-redwood-boot.img` attached: the redwood UEFI with our loader inside, ready for

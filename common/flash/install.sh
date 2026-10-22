@@ -1,0 +1,46 @@
+#!/bin/bash
+# Install HackiOS on a phone as a dual boot next to Android, or update an installed one.
+#
+# usage: common/flash/install.sh <device>            first install: build, back up, write bundle + UEFI
+#        common/flash/install.sh <device> update     a new kernel/boot volume: only the bundle (into the other boot slot)
+#
+# Needs: the phone in Android with adb and root (su), an unlocked bootloader, the darwin partition with the
+# iOS volume and the cryptexes already on it (README of the userland repository: "iOS with its root on the
+# flash"). Nothing of Android is written; see common/flash/flashctl.py for every check made.
+#   SKIP_BUILD=1   use the images already built (userland/flashboot.apfs, the kernel)
+. "$(dirname "$(readlink -f "$0")")/../lib.sh"
+load_device "$1"
+MODE=${2:-install}
+[ "$KIND" = phone ] || die "$DEVICE is not a phone"
+[ -n "$FLASH_BOOTARGS" ] || die "common/devices/$DEVICE.conf has no FLASH_BOOTARGS: this device has no installed mode yet"
+mkdir -p out
+
+K=xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837; [ -f $K ] || K=prebuilt/mach.development.bcm2837
+if [ -z "$SKIP_BUILD" ]; then
+	have_userland
+	[ -d ios165/rootfs ] || die "no iOS files: ios165/fetch.sh first"
+	env $FLASH_USERLAND_VARS userland/build.sh
+fi
+[ -f userland/flashboot.apfs ] || die "no userland/flashboot.apfs (FLASHBOOT=1 userland/build.sh makes it)"
+python3 common/flash/mkbundle.py -o out/$DEVICE-bundle.img --kernel $K --ramdisk userland/flashboot.apfs --cmdline "$FLASH_BOOTARGS"
+
+F=common/flash/flashctl.py
+python3 $F status || die "the phone is not ready (see above)"
+if [ "$MODE" = install ]; then
+	# the UEFI with the loader and no payload: the loader shows the boot menu and boots from darwin
+	FD_BASE=$FD_BASE FD_SIZE=$FD_SIZE PAYLOAD_BASE=$PAYLOAD_BASE UEFI_FD=$UEFI_FD DTB=$DTB UEFI_TARGET=$UEFI_TARGET \
+		python3 mkxnuimg.py -o out/$DEVICE-uefi.img
+	python3 $F backup || die "backup failed: nothing was written"
+	python3 $F write-bundle out/$DEVICE-bundle.img || die "the bundle was not written"
+	python3 $F write-uefi out/$DEVICE-uefi.img || die "the UEFI was not written"
+else
+	python3 $F write-bundle out/$DEVICE-bundle.img || die "the bundle was not written (the installed one still boots)"
+fi
+cat <<MSG
+
+Installed. Android is untouched and still the active slot.
+  start HackiOS:        python3 $F switch hackios        (from Android; or fastboot --set-active=<spare slot>)
+  back to Android:      choose "Android" in the HackiOS boot menu (volume keys, power)
+                        or, from fastboot: python3 $F switch android
+  remove the UEFI:      python3 $F restore
+MSG
