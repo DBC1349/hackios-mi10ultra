@@ -15,6 +15,9 @@ phone in Android (adb with root) or in fastboot.
   flashctl.py rollback                   boot the previous version from now on (until `unhold` or a new bundle)
   flashctl.py unhold                     the newest version again, and forget a generation given up on
   flashctl.py doctor                     everything the install needs, checked one by one             (writes nothing)
+  flashctl.py menu-on IMAGE              the menu on every power-on: Android's HackiOS module (KernelSU / Magisk)
+                                         makes the HackiOS slot active again once Android is up (common/flash/rearm)
+  flashctl.py menu-off                   remove that module: the phone starts Android directly again
 
 The phone must be the device the profile is for: install.sh passes the profile's CODENAMES in
 HACKIOS_CODENAMES, and nothing is written to a phone whose ro.product.device is not one of them.
@@ -90,17 +93,34 @@ def slots():
     return cur, 'b' if cur == 'a' else 'a'
 
 
+# The properties a phone's identity is read from, most trustworthy first. A ported ROM may dress the phone up
+# as another model (this one's ro.product.device says OP5D2BL1, a OnePlus), but the bootloader's own
+# hardware SKU and the board name stay what the phone is.
+IDENTITY_PROPS = ('ro.boot.hardware.sku', 'ro.boot.product.hardware.sku', 'ro.product.board',
+                  'ro.product.system.device', 'ro.product.device')
+
+
 def identity():
-    """refuse a phone that is not the device the profile is for"""
+    """refuse a phone that is not the device the profile is for; returns the codename that matched"""
     want = os.environ.get('HACKIOS_CODENAMES', '').split()
-    dev = sh('getprop ro.product.device').strip()
-    model = sh('getprop ro.product.model').strip()
     if not want:
         raise Refused('no device profile given (HACKIOS_CODENAMES): run through common/flash/install.sh or '
                       '`common/hackios`, which take it from common/devices/<device>.conf')
-    if dev not in want:
-        raise Refused('this phone is a %s (%s), not %s: nothing is written to it' % (model, dev, ' / '.join(want)))
-    return dev
+    seen = {p: sh('getprop %s' % p).strip() for p in IDENTITY_PROPS}
+    for p in IDENTITY_PROPS:
+        if seen[p] in want:
+            return seen[p]
+    raise Refused('this phone is not %s (%s): nothing is written to it' % (
+        ' / '.join(want), ', '.join('%s=%s' % (p, v) for p, v in seen.items() if v)))
+
+
+def unlocked():
+    """the bootloader's real state, from the kernel's boot parameters: a ROM's properties may say otherwise"""
+    boot = sh('cat /proc/bootconfig 2>/dev/null; tr " " "\\n" < /proc/cmdline')
+    for line in boot.splitlines():
+        if 'verifiedbootstate' in line:
+            return 'orange' in line
+    return sh('getprop ro.boot.flash.locked') == '0' or sh('getprop ro.boot.verifiedbootstate') == 'orange'
 
 
 def preflight():
@@ -109,8 +129,7 @@ def preflight():
     if sh('id -u') != '0':
         raise Refused('no root shell (su)')
     identity()
-    unlocked = sh('getprop ro.boot.flash.locked') == '0' or sh('getprop ro.boot.verifiedbootstate') == 'orange'
-    if not unlocked:
+    if not unlocked():
         raise Refused('the bootloader is locked')
     cur, spare = slots()
     pending = sh('ls /metadata/ota/snapshots 2>/dev/null | wc -l')
@@ -386,8 +405,7 @@ def cmd_doctor():
     check('phone in Android', lambda: 'yes' if in_android() else (_ for _ in ()).throw(Refused('adb get-state is not "device"')))
     check('root shell', lambda: 'uid 0' if sh('id -u') == '0' else (_ for _ in ()).throw(Refused('su gives no root')))
     check('device matches the profile', identity)
-    check('bootloader unlocked', lambda: 'yes' if (sh('getprop ro.boot.flash.locked') == '0' or
-                                                   sh('getprop ro.boot.verifiedbootstate') == 'orange')
+    check('bootloader unlocked', lambda: 'yes (verifiedbootstate orange)' if unlocked()
           else (_ for _ in ()).throw(Refused('locked: `fastboot flashing unlock` first (wipes the phone)')))
     check('A/B slots', lambda: 'android on _%s, spare _%s' % slots())
     check('no A/B update pending', lambda: 'none' if sh('ls /metadata/ota/snapshots 2>/dev/null | wc -l').strip() in ('', '0')
@@ -406,6 +424,46 @@ def cmd_doctor():
     print('doctor: ready for common/flash/install.sh')
 
 
+def root_manager():
+    """'ksud' or 'magisk': whichever manager of root modules the phone has"""
+    for tool in ('ksud', 'magisk'):
+        if sh('command -v %s >/dev/null 2>&1 && echo y || echo n' % tool) == 'y':
+            return tool
+    raise Refused('neither KernelSU (ksud) nor Magisk is on the phone: no way to install the boot menu module')
+
+
+def cmd_menu_on(image):
+    """put the rearm module in, configured with the image that is in the spare slot's boot partition"""
+    import io, zipfile
+    cur, spare, _ = preflight()
+    img = open(image, 'rb').read()
+    want = hashlib.sha256(img).hexdigest()
+    if sha_of_part('boot_' + spare, len(img)) != want:
+        raise Refused('boot_%s does not hold %s: `flashctl.py write-uefi %s` first' % (spare, image, image))
+    tool = root_manager()
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rearm')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        for name in ('module.prop', 'service.sh'):
+            z.write(os.path.join(here, name), name)
+        z.writestr('hackios.conf', 'SPARE=%s\nUEFI_SHA256=%s\nUEFI_BYTES=%d\n' % (spare, want, len(img)))
+    path = os.path.join(ROOT, 'out', 'hackios-rearm.zip')
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, 'wb').write(buf.getvalue())
+    confirm('install the HackiOS boot menu module (%s): after Android starts, slot _%s is made active again' % (tool, spare))
+    subprocess.run(['adb', 'push', path, '/data/local/tmp/hackios-rearm.zip'], check=True, capture_output=True)
+    out = sh('%s /data/local/tmp/hackios-rearm.zip; rm -f /data/local/tmp/hackios-rearm.zip' %
+             ('ksud module install' if tool == 'ksud' else 'magisk --install-module'))
+    log('boot menu module installed with %s (%s); active from the next start of Android' % (tool, out.splitlines()[-1] if out else 'ok'))
+
+
+def cmd_menu_off():
+    preflight()
+    tool = root_manager()
+    sh('ksud module uninstall hackios-rearm' if tool == 'ksud' else 'touch /data/adb/modules/hackios-rearm/remove')
+    log('boot menu module removed (from the next reboot Android starts directly)')
+
+
 def main(a):
     try:
         if a[:1] == ['status']: cmd_status()
@@ -419,6 +477,8 @@ def main(a):
         elif a[:1] == ['rollback']: cmd_hold(True)
         elif a[:1] == ['unhold']: cmd_hold(False)
         elif a[:1] == ['doctor']: cmd_doctor()
+        elif a[:1] == ['menu-on'] and len(a) == 2: cmd_menu_on(a[1])
+        elif a[:1] == ['menu-off']: cmd_menu_off()
         else:
             print(__doc__); return 2
     except Refused as e:

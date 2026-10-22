@@ -10,7 +10,9 @@
 #   guard       the newest was started 3 times and never came up: the countdown skips it, the older boots,
 #               and the newest is remembered as given up on
 #   fallback    no installed generation comes up: the countdown goes to Android (the A/B bytes exchanged)
-#   android     down, down + power: back to Android by hand; the GPT is checked afterwards
+#   android     down, down + power: back to Android by hand; the GPT is checked afterwards, and the choice is
+#               remembered in the boot state
+#   remembered  the last choice was Android: the countdown takes Android again, like a PC's boot menu
 #   tampered    the newest bundle's contents changed after it was made: its SHA-256 refuses it
 #   signed      a loader with an owner key pinned: the unsigned newest is refused, the signed older boots
 #   forged      a pinned loader, a bundle signed by another key: refused, nothing boots, the menu stays
@@ -46,9 +48,9 @@ put() {         # put FILE BLOCK: into darwin at 4 KiB block BLOCK
 
 slot() { put $1 $((2042368 + $2 * 24576)); }
 
-state() {       # state trying tries good bad: write a boot state
+state() {       # state trying tries good bad [flags]: write a boot state
 	python3 -c "import sys; sys.path.insert(0, 'common/flash'); import bundlefmt as f
-open('$W/state.img', 'wb').write(f.make_state(trying=$1, tries=$2, good=$3, bad=$4))"
+open('$W/state.img', 'wb').write(f.make_state(trying=$1, tries=$2, good=$3, bad=$4, flags=${5:-0}))"
 	put $W/state.img 2091520
 }
 
@@ -125,7 +127,15 @@ scenario() {
 		echo "   A/B after: $(ab)"
 		expect android "menu: Android$" "ab: slots exchanged"
 		sgdisk -A 2:show $W/disk.img | grep -q "^2:50:1" || { echo "   boot_b is not active"; FAIL=$((FAIL+1)); FAILED="$FAILED android-ab"; }
+		dd if=$W/disk.img bs=512 skip=$((DARWIN_START + 2091520 * 8)) count=1 status=none | python3 -c "
+import sys; sys.path.insert(0, 'common/flash'); import bundlefmt as f
+s = f.parse_state(sys.stdin.buffer.read()); sys.exit(0 if s and s['flags'] & f.STATE_LAST_ANDROID else 1)" ||
+			{ echo "   the choice was not remembered"; FAIL=$((FAIL+1)); FAILED="$FAILED android-remembered"; }
 		sgdisk -v $W/disk.img | grep -q "No problems found" || { echo "   GPT not sound"; FAIL=$((FAIL+1)); FAILED="$FAILED android-gpt"; } ;;
+	remembered)
+		disk; slot $W/gen1.img 0; slot $W/gen2.img 1; state 2 0 2 0 2
+		run $L "" "ab: slots exchanged|ab: not exactly|ab: no unit|flash: booting slot"
+		expect remembered "menu: Android \(countdown\)" "ab: slots exchanged" "!booting slot" ;;
 	tampered)
 		disk; cp $W/gen2.img $W/bad.img
 		printf 'X' | dd of=$W/bad.img bs=1 seek=$((4096 + 5000)) conv=notrunc status=none
@@ -155,7 +165,7 @@ scenario() {
 	esac
 }
 
-ALL="boot previous guard fallback android tampered signed forged"
+ALL="boot previous guard fallback android remembered tampered signed forged"
 [ $# -gt 0 ] || set -- $ALL
 for s in "$@"; do scenario "$s"; done
 echo "qemu-test: $PASS passed, $FAIL failed${FAILED:+:$FAILED}"

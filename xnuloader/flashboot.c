@@ -11,6 +11,10 @@
  *      runs it with no time limit: a session lasts until the phone is switched off or restarted;
  *   3. for Android makes the other slot active again and resets.
  *
+ * Every power-on shows the menu, like a PC's: after Android has come up, the HackiOS module in it
+ * (common/flash/rearm, for KernelSU or Magisk) makes this slot active again, so the next start comes
+ * here first; and the countdown takes what was chosen last time (FB_LAST_ANDROID in the boot state).
+ *
  * The boot area is the free stretch of darwin between the cryptexes and the var store's slots (README of
  * the userland repository: "Data that survives a reboot"): two bundle slots used in turn, each a header
  * block and the container behind it, and one block of boot state (formats: common/flash/bundlefmt.py).
@@ -52,6 +56,7 @@
 #define FB_MAX_TRIES      3
 #define FB_SIGNED         1ULL
 #define FB_HOLD           1u
+#define FB_LAST_ANDROID   2u                      /* the last choice was Android: the countdown offers it again */
 
 static const char fb_magic[8] = { 'H', 'K', 'B', 'O', 'O', 'T', '0', '2' };
 static const char fb_state_magic[8] = { 'H', 'K', 'S', 'T', 'A', 'T', 'E', '1' };
@@ -71,7 +76,8 @@ struct fb_state {
 	char magic[8];
 	uint64_t trying;                        /* the generation started last */
 	uint32_t tries;                         /* started that many times in a row, not come up */
-	uint32_t flags;                         /* FB_HOLD: the previous version, asked for (flashctl rollback) */
+	uint32_t flags;                         /* FB_HOLD: the previous version, asked for (flashctl rollback);
+	                                         * FB_LAST_ANDROID: the last choice, for the countdown's default */
 	uint64_t good;                          /* the last generation that came up */
 	uint64_t boots;                         /* starts of HackiOS */
 	uint64_t bad;                           /* a generation given up on: the countdown skips it */
@@ -298,6 +304,7 @@ fb_count_start(int s)
 		fb.st.tries = 1;
 	}
 	fb.st.boots++;
+	fb.st.flags &= ~FB_LAST_ANDROID;
 	if (fb_state_write()) {
 		print("flash: start %d of generation %d counted (it is given up on after %d without coming up)\n",
 		    (uint64_t)fb.st.tries, g, (uint64_t)FB_MAX_TRIES);
@@ -618,7 +625,10 @@ fb_standalone(void)
 
 		have[MENU_HACKIOS] = fb.newest >= 0 && fb.ok[fb.newest];
 		have[MENU_PREVIOUS] = fb.older >= 0 && fb.ok[fb.older];
-		if (auto_slot >= 0) {
+		if (auto_slot >= 0 && (fb.st.flags & FB_LAST_ANDROID) && have[MENU_ANDROID]) {
+			/* like a PC's boot menu: what was chosen last time is what the countdown takes */
+			dflt = MENU_ANDROID;
+		} else if (auto_slot >= 0) {
 			dflt = auto_slot == fb.newest ? MENU_HACKIOS : MENU_PREVIOUS;
 		} else if (have[MENU_HACKIOS] && have[MENU_ANDROID]) {
 			/* installed, and nothing installed comes up: the countdown goes back to Android */
@@ -633,6 +643,10 @@ fb_standalone(void)
 		if (choice == MENU_HACKIOS || choice == MENU_PREVIOUS) {
 			fb_boot(choice == MENU_HACKIOS ? fb.newest : fb.older);
 		} else if (choice == MENU_ANDROID) {
+			if (fb.bio != NULL && !(fb.st.flags & FB_LAST_ANDROID)) {
+				fb.st.flags |= FB_LAST_ANDROID;         /* (before the switch: a write to darwin after it is never needed) */
+				fb_state_write();
+			}
 			if (ab_switch_back()) {
 				reboot();
 			}

@@ -39,6 +39,8 @@ if [ "$MODE" = install ]; then
 	python3 $F backup || die "backup failed: nothing was written"
 	python3 $F write-bundle out/$DEVICE-bundle.img || die "the bundle was not written"
 	python3 $F write-uefi out/$DEVICE-uefi.img || die "the UEFI was not written"
+	# the menu on every power-on, as on a PC: Android hands the next start back to HackiOS's slot
+	python3 $F menu-on out/$DEVICE-uefi.img || echo "install.sh: no boot menu module (no KernelSU/Magisk?): switch with flashctl.py switch"
 else
 	python3 $F write-bundle out/$DEVICE-bundle.img || die "the bundle was not written (the installed one still boots)"
 fi

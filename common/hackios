@@ -11,6 +11,7 @@
 #   common/hackios update  <device>              a new version into the other boot slot (the old one stays)
 #   common/hackios status|health|verify|rollback|unhold|switch|restore <device> [args]
 #                                                common/flash/flashctl.py, with the device's identity checks
+#   common/hackios menu-on|menu-off <device>      the boot menu on every power-on, or Android directly
 #   common/hackios key init|show|pin|unpin       the owner key: verified boot held by the owner
 #   common/hackios test [scenario...]            the dual boot in QEMU, every path, no phone needed
 #   common/hackios new-device <name> [dtb]       a profile for a new phone (common/new-device.sh)
@@ -29,7 +30,13 @@ need_device() {
 	exit 2
 }
 
-adb_device() { adb shell getprop ro.product.device 2>/dev/null | tr -d '\r'; }
+# the phone's codenames as a ROM cannot dress them up: hardware SKU and board first (flashctl.py, IDENTITY_PROPS)
+adb_devices() {
+	local p
+	for p in ro.boot.hardware.sku ro.boot.product.hardware.sku ro.product.board ro.product.system.device ro.product.device; do
+		adb shell getprop $p 2>/dev/null | tr -d '\r'
+	done | awk 'NF && !seen[$0]++'
+}
 
 case $cmd in
 devices)
@@ -40,21 +47,23 @@ devices)
 		printf '%-12s %-36s %-8s %-10s %s\n' "$n" "$(profile_var $n NAME)" "$(profile_var $n KIND)" $dual "$(profile_var $n CODENAMES)"
 	done ;;
 detect)
-	dev=$(adb_device)
-	[ -n "$dev" ] || { echo "hackios: no phone in Android on adb"; exit 1; }
-	echo "phone: $(adb shell getprop ro.product.model | tr -d '\r') ($dev), Android $(adb shell getprop ro.build.version.release | tr -d '\r'), bootloader $(adb shell getprop ro.boot.verifiedbootstate | tr -d '\r')"
+	devs=$(adb_devices)
+	[ -n "$devs" ] || { echo "hackios: no phone in Android on adb"; exit 1; }
+	echo "phone: $(adb shell getprop ro.product.model | tr -d '\r'), codenames: $(echo $devs), Android $(adb shell getprop ro.build.version.release | tr -d '\r')"
 	for f in "$ROOT"/common/devices/*.conf; do
 		n=$(basename "$f" .conf); [ "${n:0:1}" = _ ] && continue
-		for c in $(profile_var $n CODENAMES); do [ "$c" = "$dev" ] && { echo "profile: $n"; exit 0; }; done
+		for c in $(profile_var $n CODENAMES); do
+			for d in $devs; do [ "$c" = "$d" ] && { echo "profile: $n"; exit 0; }; done
+		done
 	done
-	echo "profile: none -- this phone is not supported yet (common/hackios new-device $dev)"; exit 1 ;;
+	echo "profile: none -- this phone is not supported yet (common/hackios new-device $(echo $devs | cut -d' ' -f1))"; exit 1 ;;
 setup) exec "$ROOT/common/setup.sh" "$@" ;;
 build) exec "$ROOT/common/build.sh" "$@" ;;
 run) exec "$ROOT/common/run.sh" "$@" ;;
 new-device) exec "$ROOT/common/new-device.sh" "$@" ;;
 install) need_device "${1:-}"; exec "$ROOT/common/flash/install.sh" "$1" ;;
 update) need_device "${1:-}"; exec "$ROOT/common/flash/install.sh" "$1" update ;;
-doctor|status|health|verify|rollback|unhold|switch|restore|backup)
+doctor|status|health|verify|rollback|unhold|switch|restore|backup|menu-on|menu-off)
 	need_device "${1:-}"; dev=$1; shift
 	HACKIOS_CODENAMES="$(profile_var $dev CODENAMES)" exec python3 "$ROOT/common/flash/flashctl.py" $cmd "$@" ;;
 key) exec python3 "$ROOT/common/flash/ownerkey.py" "$@" ;;
