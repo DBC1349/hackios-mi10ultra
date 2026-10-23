@@ -2703,6 +2703,29 @@ apr_ask(uint8_t service, uint32_t opcode, const void *payload, uint32_t length, 
 #define USB_TYPE                6               /* Linux's POWER_SUPPLY_USB_TYPE_*: 1 here, a computer's port */
 #define USB_ONLINE              0
 #define BATTMGR_SECONDS         10
+/*
+ * What Android's qti_battery_charger.c does besides asking (Xiaomi's kernel for this phone, GPL): it asks the
+ * DSP for its notices once the channel is up (BC_SET_NOTIFY_REQ, a notice-type message of four zero words),
+ * and it reads Xiaomi's own properties of the charger with opcode 0x50 (BC_XM_STATUS_GET), numbered as that
+ * kernel's enum xm_property_id with this phone's configuration (CONFIG_REDWOOD_FOR_BUILD, CONFIG_BQ2597X,
+ * CONFIG_BQ_CLOUD_AUTHENTICATION) leaves them. battmgr=3 asks for every one of the 115 once, for the log, to
+ * hold the numbers against what Android shows in /sys/class/qcom-battery. Nothing is set from here.
+ */
+#define BATTMGR_SET_NOTIFY      0x04
+#define BATTMGR_XM_GET          0x50
+#define BATTMGR_XM_PROPS        115
+#define USB_CURR_MAX            4               /* uA */
+#define USB_INPUT_CURR_LIMIT    5               /* uA */
+#define USB_REAL_TYPE           11
+#define XM_COOL_MODE            20
+#define XM_INPUT_SUSPEND        45
+#define XM_REAL_TYPE            46
+#define XM_FASTCHGMODE          63
+#define XM_THERMAL_REMOVE       65
+#define XM_NIGHT_CHARGING       77
+#define XM_SMART_BATT           78
+#define XM_FG1_SOH              82
+#define XM_FG1_TAMBIENT         89
 
 struct battmgr_message {
 	uint32_t owner, type, opcode;
@@ -2715,6 +2738,22 @@ static struct {
 	bool wanted;
 	volatile bool runs;
 } battmgr;
+
+/* the charger as the DSP and Xiaomi's properties describe it, for kern.hackios.charger */
+static char battmgr_charger[768] = "charger: not asked yet (adsp=1, and the DSP's battery manager up)\n";
+
+static int
+battmgr_charger_sysctl(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	static char copy[sizeof(battmgr_charger)];
+
+	memcpy(copy, battmgr_charger, sizeof(copy));
+	copy[sizeof(copy) - 1] = 0;
+	return SYSCTL_OUT(req, copy, strlen(copy) + 1);
+}
+SYSCTL_DECL(_kern_hackios);
+SYSCTL_PROC(_kern_hackios, OID_AUTO, charger, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED, 0, 0,
+    battmgr_charger_sysctl, "A", "the charger, as the audio DSP's battery manager and Xiaomi's properties say");
 
 static void
 battmgr_input(const uint8_t *data, uint32_t length)
@@ -2770,6 +2809,62 @@ battmgr_get(uint32_t opcode, uint32_t property, uint32_t *value)
 	return false;
 }
 
+/* the DSP's notices asked for, as Android does once its battery manager's channel is up */
+static void
+battmgr_notify_enable(void)
+{
+	struct {
+		uint32_t owner, type, opcode;
+		uint32_t battery, power_state, low_capacity, high_capacity;
+	} q = { BATTMGR_OWNER, BATTMGR_NOTICE, BATTMGR_SET_NOTIFY, 0, 0, 0, 0 };
+	uint32_t on = 1;
+
+	PE_parse_boot_argn("battmgr_notify", &on, sizeof(on));
+	if (on == 0) {
+		return;
+	}
+	tell("adsp: battmgr: the DSP's notices asked for (BC_SET_NOTIFY_REQ, as Android does): %s\n",
+	    glink_send(&glink.channel[CHANNEL_PMIC], &q, sizeof(q)) == 0 ? "sent" : "NOT SENT");
+}
+
+/* the charger's state, Xiaomi's properties among it, into kern.hackios.charger (and the log when it changes) */
+static void
+battmgr_charger_look(uint32_t usb)
+{
+	static const struct { uint32_t opcode, property; const char *name; } asked[] = {
+		{ BATTMGR_USB_GET, USB_CURR_MAX, "usb_current_max_ua" },
+		{ BATTMGR_USB_GET, USB_INPUT_CURR_LIMIT, "usb_input_limit_ua" },
+		{ BATTMGR_USB_GET, USB_REAL_TYPE, "usb_real_type" },
+		{ BATTMGR_XM_GET, XM_INPUT_SUSPEND, "input_suspend" },
+		{ BATTMGR_XM_GET, XM_REAL_TYPE, "xm_real_type" },
+		{ BATTMGR_XM_GET, XM_FASTCHGMODE, "fastchg_mode" },
+		{ BATTMGR_XM_GET, XM_THERMAL_REMOVE, "thermal_remove" },
+		{ BATTMGR_XM_GET, XM_COOL_MODE, "cool_mode" },
+		{ BATTMGR_XM_GET, XM_NIGHT_CHARGING, "night_charging" },
+		{ BATTMGR_XM_GET, XM_SMART_BATT, "smart_batt" },
+		{ BATTMGR_XM_GET, XM_FG1_SOH, "soh_percent" },
+		{ BATTMGR_XM_GET, XM_FG1_TAMBIENT, "fg_ambient" },
+	};
+	static char text[sizeof(battmgr_charger)];
+	size_t n = 0;
+
+	n += snprintf(text + n, sizeof(text) - n, "usb_online %u\n", usb);
+	for (unsigned i = 0; i < sizeof(asked) / sizeof(asked[0]) && n < sizeof(text); i++) {
+		uint32_t v = 0;
+
+		if (battmgr_get(asked[i].opcode, asked[i].property, &v)) {
+			n += snprintf(text + n, sizeof(text) - n, "%s %d\n", asked[i].name, (int)v);
+		} else {
+			n += snprintf(text + n, sizeof(text) - n, "%s -\n", asked[i].name);
+		}
+	}
+	if (strcmp(text, battmgr_charger) != 0) {
+		memcpy(battmgr_charger, text, sizeof(battmgr_charger));
+		battmgr_charger[sizeof(battmgr_charger) - 1] = 0;
+		tell("adsp: battmgr: the charger now:\n%s", battmgr_charger);
+	}
+}
+
 static void
 battmgr_thread(__unused void *parameter, __unused wait_result_t result)
 {
@@ -2787,6 +2882,14 @@ battmgr_thread(__unused void *parameter, __unused wait_result_t result)
 		uint32_t mode = 1;
 
 		PE_parse_boot_argn("battmgr", &mode, sizeof(mode));
+		battmgr_notify_enable();
+		/* battmgr=3: every one of Xiaomi's properties once (opcode 0x50) */
+		for (uint32_t p = 0; mode == 3 && p < BATTMGR_XM_PROPS; p++) {
+			uint32_t v = 0;
+			bool ok = battmgr_get(BATTMGR_XM_GET, p, &v);
+
+			tell("adsp: battmgr: xiaomi property %u: %s %u (%d)\n", p, ok ? "" : "NO ANSWER", v, (int)v);
+		}
 		for (uint32_t p = 0; mode == 2 && p < 32; p++) {
 			uint32_t v = 0;
 			bool ok = battmgr_get(BATTMGR_BATTERY_GET, p, &v);
@@ -2841,6 +2944,15 @@ battmgr_thread(__unused void *parameter, __unused wait_result_t result)
 			b.usb_voltage_uv = (int32_t)usb_volt;
 			b.usb_current_ua = (int32_t)usb_curr;
 			hk_battery_report(&b);
+			/* the charger's own story: at the start, whenever the cable comes or goes, and every minute */
+			{
+				static uint32_t usb_before = 0xffffffff;
+
+				if (round % 6 == 0 || usb != usb_before) {
+					battmgr_charger_look(usb);
+					usb_before = usb;
+				}
+			}
 		}
 		if (round < 3 || round % 6 == 0 || !good) {
 			tell("adsp: battmgr: %s capacity %u (hundredths of a percent), status %u, present %u, %d uV, %d uA, temperature %d "

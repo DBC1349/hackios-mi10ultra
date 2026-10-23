@@ -462,7 +462,7 @@ apfs_stats_print(void)
 extern void hk_memory_line(char *buf, size_t len);
 
 static int
-sysctl_redwood_memory SYSCTL_HANDLER_ARGS
+sysctl_hk_memory SYSCTL_HANDLER_ARGS
 {
 #pragma unused(oidp, arg1, arg2)
 	char line[256];
@@ -472,7 +472,7 @@ sysctl_redwood_memory SYSCTL_HANDLER_ARGS
 }
 
 SYSCTL_PROC(_kern, OID_AUTO, hk_memory, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED,
-    0, 0, sysctl_redwood_memory, "A", "where the memory is, in MB");
+    0, 0, sysctl_hk_memory, "A", "where the memory is, in MB");
 
 SYSCTL_PROC(_kern, OID_AUTO, apfs_stats, CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_LOCKED,
     0, 0, sysctl_apfs_stats, "A", "APFS: where the time goes; write to zero it");
