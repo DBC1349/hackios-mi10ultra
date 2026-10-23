@@ -2820,6 +2820,9 @@ battmgr_notify_enable(void)
 	uint32_t on = 1;
 
 	PE_parse_boot_argn("battmgr_notify", &on, sizeof(on));
+	if (PE_parse_boot_argn("battmgr_xm", &on, sizeof(on)) && on == 0) {
+		return;
+	}
 	if (on == 0) {
 		return;
 	}
@@ -2831,6 +2834,12 @@ battmgr_notify_enable(void)
 static void
 battmgr_charger_look(uint32_t usb)
 {
+	uint32_t xm = 1;
+
+	/* battmgr_xm=0: the battery alone, as before the charger's own story was asked for */
+	if (PE_parse_boot_argn("battmgr_xm", &xm, sizeof(xm)) && xm == 0) {
+		return;
+	}
 	static const struct { uint32_t opcode, property; const char *name; } asked[] = {
 		{ BATTMGR_USB_GET, USB_CURR_MAX, "usb_current_max_ua" },
 		{ BATTMGR_USB_GET, USB_INPUT_CURR_LIMIT, "usb_input_limit_ua" },

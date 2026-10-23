@@ -45,7 +45,7 @@
 # this change leaves none -- and `run` says so rather than assuming.
 cd "$(dirname "$(readlink -f "$0")")" || exit 1
 # the kernel and the loader built here, or else the ones that come with the repository
-K=xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
+K=${XL_KERNEL:-xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837}   # XL_KERNEL=file: another kernel for this run
 [ -f $K ] || K=prebuilt/mach.development.bcm2837
 L=xnuloader/loader.efi
 [ -f $L ] || L=prebuilt/loader.efi

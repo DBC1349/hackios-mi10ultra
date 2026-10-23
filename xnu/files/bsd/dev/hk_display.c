@@ -50,8 +50,9 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 #define INTF_FRAME_COUNT        0x0ac
 #define INTF_LINE_COUNT         0x0b0
 
-static vm_offset_t intf;
+static vm_offset_t intf, gcc_map, dispcc_map;
 static struct hk_display_scan scan;
+
 
 static inline uint32_t
 rd(vm_offset_t base, uint32_t offset)
@@ -63,6 +64,21 @@ static inline void
 wr(vm_offset_t base, uint32_t offset, uint32_t value)
 {
 	*(volatile uint32_t *)(base + offset) = value;
+}
+
+/*
+ * Whether the display block's registers can be read right now: its power switch on and the two bus clocks
+ * running. On these SoCs a read of a block whose clock is off does not fail, it hangs the bus -- the whole
+ * phone, the loader's core with it. The clock controllers themselves always answer (GCC; dispcc once GCC's
+ * clock for it runs, which is checked first), so this is asked before every read of the scan's counters,
+ * and once the answer is no, the scan is given up for good: frames go back to the driver's own clock.
+ */
+static int
+regs_alive(void)
+{
+	return (rd(gcc_map, GCC_DISP_AHB_CBCR & 0xfffu) & CBCR_ENABLE) &&
+	       (rd(dispcc_map, DISPCC_MDSS_CORE_GDSCR) & GDSC_POWER_ON) &&
+	       !(rd(dispcc_map, DISPCC_MDSS_AHB_CBCR) & CBCR_OFF);
 }
 
 /* one bus clock on (and left on); 1 if it runs */
@@ -89,6 +105,12 @@ hk_display_line(uint32_t *frame)
 	uint32_t f, line;
 
 	if (intf == 0) {
+		return 0;
+	}
+	if (!regs_alive()) {
+		printf("display: the display block's clock or power went off: the scan is no longer read\n");
+		intf = 0;
+		scan.ok = 0;
 		return 0;
 	}
 	/* the two counters together: a frame that begins between the two reads is read again */
@@ -171,8 +193,8 @@ hk_display_scan_start(void)
 	if (!PE_parse_boot_argn("fb_scan", &on, sizeof(on)) || on != 1) {
 		return 0;
 	}
-	gcc = ml_io_map(GCC_PHYS + (GCC_DISP_AHB_CBCR & ~0xfffu), 0x1000);
-	dispcc = ml_io_map(DISPCC_PHYS, 0x2000);
+	gcc = gcc_map = ml_io_map(GCC_PHYS + (GCC_DISP_AHB_CBCR & ~0xfffu), 0x1000);
+	dispcc = dispcc_map = ml_io_map(DISPCC_PHYS, 0x2000);
 	if (!clock_on(gcc, GCC_DISP_AHB_CBCR & 0xfffu, "display clock controller's bus")) {
 		return 0;
 	}
