@@ -72,6 +72,10 @@ struct redwood_battery_state {
 void redwood_battery_report(const struct redwood_battery_state *state);
 void redwood_net_init(void);            /* en0, if there is something to carry its frames: sys/redwood_net.h */
 void redwood_cpufreq_init(void);        /* boot-arg cpufreq=1: the phone's processor at full speed */
+int redwood_cpufreq_top(uint32_t domain);                 /* a group's highest row, -1 if not raised */
+uint32_t redwood_cpufreq_khz(uint32_t domain, int row);   /* how fast that row is, 0 if there is none */
+void redwood_cpufreq_cap(uint32_t domain, int row);       /* run the group at that row (the thermal service) */
+void redwood_thermal_init(void);        /* the thermal service: on with cpufreq=1 unless thermal=0 (bsd/dev/redwood_thermal.c) */
 void redwood_adreno_init(void);         /* boot-arg adreno=N: the first N steps of waking the phone's GPU */
 void redwood_adreno_quiesce(void);      /* on the way back to the loader: the GPU block stopped, out of our memory */
 void redwood_adreno_stop(void);         /* before that, where the ending is no panic's: the GPU given back in order */

@@ -86,6 +86,11 @@ domain_of(uint32_t phys_id)
 	return core < 4 ? 0 : core < 7 ? 1 : 2;
 }
 
+/* each group's registers and the highest row of its table, once raised: for the thermal service's caps */
+static vm_offset_t epss_base[EPSS_DOMAINS];
+static int epss_top[EPSS_DOMAINS] = { -1, -1, -1 };
+static uint32_t epss_khz[EPSS_DOMAINS][EPSS_TABLE_ROWS];
+
 static void
 raise_domain(uint32_t domain, uint32_t cores)
 {
@@ -102,12 +107,51 @@ raise_domain(uint32_t domain, uint32_t cores)
 		}
 		top = row;
 		top_khz = khz;
+		epss_khz[domain][row] = khz;
 	}
+	epss_base[domain] = base;
+	epss_top[domain] = (int)top;
 	was = *(volatile uint32_t *)(base + EPSS_PERF_STATE);
 	*(volatile uint32_t *)(base + EPSS_PERF_STATE) = top;
 	delay_for_interval(20, NSEC_PER_MSEC);
 	tell("cpufreq: group %u (%u of our cores): row %u -> %u of the frequency table, %u MHz\n", domain, cores, was, top,
 	    top_khz / 1000);
+}
+
+/*
+ * For the thermal service (bsd/dev/redwood_thermal.c): the highest row of a group's table (-1 when the
+ * group was not raised -- none of our cores in it, or cpufreq=0), how fast a row is, and a cap: the
+ * row the group is to run at, never above its top. One register write, as raising it was; EPSS moves
+ * the clock and the voltage by itself.
+ */
+int
+redwood_cpufreq_top(uint32_t domain)
+{
+	return domain < EPSS_DOMAINS ? epss_top[domain] : -1;
+}
+
+uint32_t
+redwood_cpufreq_khz(uint32_t domain, int row)
+{
+	if (domain >= EPSS_DOMAINS || row < 0 || row > epss_top[domain]) {
+		return 0;
+	}
+	return epss_khz[domain][row];
+}
+
+void
+redwood_cpufreq_cap(uint32_t domain, int row)
+{
+	if (domain >= EPSS_DOMAINS || epss_top[domain] < 0) {
+		return;
+	}
+	if (row < 0) {
+		row = 0;
+	}
+	if (row > epss_top[domain]) {
+		row = epss_top[domain];
+	}
+	*(volatile uint32_t *)(epss_base[domain] + EPSS_PERF_STATE) = (uint32_t)row;
 }
 
 /*

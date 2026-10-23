@@ -89,6 +89,7 @@
 #include <sys/errno.h>
 #include <sys/kauth.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/systm.h>
 #include <sys/vnode.h>
 #include <sys/vnode_internal.h>
@@ -2284,6 +2285,56 @@ static struct {
 	bool there;
 } qrtr_servers[64];
 static uint32_t qrtr_peer, qrtr_in, qrtr_out, qrtr_hellos, qrtr_lookups;
+/* what the DSP looked for on our side (the first 16): what it is waiting for before it starts more */
+static struct {
+	uint32_t service, instance;
+} qrtr_wanted[16];
+
+/*
+ * The names of the QMI services that matter for what comes next (the numbers are the ones every
+ * Qualcomm client uses; Linux has them as constants beside each client): the sensors' own service is
+ * how a sensor client would speak to the DSP's sensor framework, and it only appears once the DSP's
+ * sensor protection domain has started -- which waits for the service locator and notifier it looks
+ * for on our side. kern.redwood.adsp_services tells, on the phone, which of these there are.
+ */
+static const char *
+qrtr_service_name(uint32_t service)
+{
+	switch (service) {
+	case 16: return "location (LOC)";
+	case 43: return "subsystem control (SSCTL)";
+	case 64: return "service locator (SERVREG_LOC)";
+	case 66: return "service notifier (SERVREG_NOTIF)";
+	case 69: return "Wi-Fi firmware (WLFW)";
+	case 400: return "sensors (SNS client, SEE)";
+	default: return "";
+	}
+}
+
+static int
+adsp_services_sysctl(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
+{
+	static char text[4096];
+	size_t n = 0;
+
+	n += snprintf(text + n, sizeof(text) - n, "offered by the DSP:\n");
+	for (unsigned i = 0; i < sizeof(qrtr_servers) / sizeof(qrtr_servers[0]) && n < sizeof(text); i++) {
+		if (qrtr_servers[i].there) {
+			n += snprintf(text + n, sizeof(text) - n, "  %u version %u instance %u at %u:%u %s\n", qrtr_servers[i].service,
+			    qrtr_servers[i].instance & 0xff, qrtr_servers[i].instance >> 8, qrtr_servers[i].node, qrtr_servers[i].port,
+			    qrtr_service_name(qrtr_servers[i].service));
+		}
+	}
+	n += snprintf(text + n, sizeof(text) - n, n < sizeof(text) ? "looked for by the DSP on our side (%u times):\n" : "", qrtr_lookups);
+	for (unsigned i = 0; i < sizeof(qrtr_wanted) / sizeof(qrtr_wanted[0]) && i < qrtr_lookups && n < sizeof(text); i++) {
+		n += snprintf(text + n, sizeof(text) - n, "  %u instance %u %s\n", qrtr_wanted[i].service, qrtr_wanted[i].instance,
+		    qrtr_service_name(qrtr_wanted[i].service));
+	}
+	return SYSCTL_OUT(req, text, strlen(text) + 1);
+}
+SYSCTL_DECL(_kern_redwood);
+SYSCTL_PROC(_kern_redwood, OID_AUTO, adsp_services, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED, 0, 0,
+    adsp_services_sysctl, "A", "the QMI services the audio DSP offers, and those it looks for on our side");
 
 static int
 qrtr_out_packet(uint32_t type, uint32_t from_port, uint32_t to_node, uint32_t to_port, const void *data, uint32_t length)
@@ -2354,6 +2405,10 @@ qrtr_control(const struct qrtr_header *header, const struct qrtr_control *contro
 		break;
 	case QRTR_NEW_LOOKUP:
 		/* the DSP looks for a service of ours (a protection domain's locator, say): there are none yet */
+		if (qrtr_lookups < sizeof(qrtr_wanted) / sizeof(qrtr_wanted[0])) {
+			qrtr_wanted[qrtr_lookups].service = control->words[0];
+			qrtr_wanted[qrtr_lookups].instance = control->words[1];
+		}
 		if (qrtr_lookups++ < 16) {
 			printf("adsp: qrtr: the DSP looks for service %u (%#x), instance %u: nobody here offers it\n", control->words[0],
 			    control->words[0], control->words[1]);

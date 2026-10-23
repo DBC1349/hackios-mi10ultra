@@ -20,6 +20,8 @@ jobs:
           ! grep -E "warning|error" build.log
       - name: crypto agrees with hashlib and cryptography
         run: python3 tools/crypto-test/run.py
+      - name: thermal governor scenarios
+        run: tools/thermal-test/run.sh
       - name: python parses
         run: python3 -m py_compile common/flash/*.py mkxnuimg.py xnuloader/*.py
       - name: shell scripts
