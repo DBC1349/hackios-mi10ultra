@@ -46,7 +46,7 @@ fi
 if ! skip images; then
 	have_userland
 	[ -d ios165/rootfs ] || die "no iOS files yet: run ios165/fetch.sh first (it downloads them from Apple to this machine)"
-	env REST=1 $USERLAND_VARS "$@" userland/build.sh
+	env REST=1 $USERLAND_VARS "$@" userland/build.sh || die "image build failed"
 fi
 
 if ! skip boot && [ "$KIND" = phone ]; then
