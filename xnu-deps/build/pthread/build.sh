@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Build the open-source pthread kernel extension (libpthread/kern) as a static
 # library that gets linked into the XNU kernel image (there is no kext loader
 # in this setup). Requires an XNU build tree for the exported kernel headers.

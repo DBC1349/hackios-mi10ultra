@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Save the screen of a running QEMU (started with -device ramfb -monitor tcp:127.0.0.1:4444,server,nowait) as a PNG.
 # usage: screendump.sh [out.png]      (FULL=1: the whole mode, not only the phone-sized corner)
 out=$(realpath -m "${1:-$(dirname "$(readlink -f "$0")")/../logs/qemu-screen.png}")   # QEMU writes it: absolute

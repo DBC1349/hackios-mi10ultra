@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Stop the QEMU of this working copy (and only it): "quit" on its monitor.
 # The instance is QEMU_INSTANCE, or the number in qemu/instance, or 0 (see run-ios.sh).
 here=$(dirname "$(readlink -f "$0")")

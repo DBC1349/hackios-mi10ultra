@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # xl — drive the XNU loader on the phone over USB (fastboot protocol).
 #
 #   xl enter            get the phone into the resident loader (from Android or stock fastboot)

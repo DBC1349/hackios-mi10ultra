@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Build and run the tests of the QMI helpers (bsd/dev/redwood_qmi.c of the kernel tree) on this
 # machine, under the address and undefined-behaviour sanitizers.
 #

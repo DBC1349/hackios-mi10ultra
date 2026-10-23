@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Boot the whole system under QEMU: the big system image preloaded at the loader's resident
 # address (it becomes /dev/md0, the root) and the small image in the payload (/dev/md1), the
 # same arrangement `xl ramdisk` + `xl run` make on the phone.

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # A read-only fingerprint of the phone's flash, to tell whether anything has changed it.
 #
 #   flash-fingerprint.sh android DIR       from Android (adb, root): for each logical unit sda..sdf its

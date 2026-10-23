@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Build everything a device needs, in order, skipping what cannot be built on this machine.
 #
 # usage: common/build.sh <device> [userland/build.sh variables...]

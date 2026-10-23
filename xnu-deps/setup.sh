@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Everything the kernel build needs that this repository does not carry: open sources of
 # Apple's and others' that are fetched and built here, and the SDK the kernel is compiled
 # against. What is already there is left alone, so this can be run again at any time.

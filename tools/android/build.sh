@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Build the small tools that are run on the phone under Android (adb's root shell): static arm64
 # Linux binaries with no C library, so nothing beyond clang and lld is needed.
 set -e

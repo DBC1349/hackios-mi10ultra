@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # A session for somebody with a hand on the phone's keys: one run of iOS with the buttons' driver
 # on (boot-arg buttons=1), in which everything the driver sees and everything iOS makes of it is
 # collected, and a summary at the end.

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Save our changes to the Mu-Silicium tree (../Mu-Silicium, a clone of Project-Silicium/Mu-Silicium
 # with the redwood port in it) into this directory: mu-silicium.patch for the files that upstream
 # has, files/ for the ones it does not. apply.sh puts them into a fresh clone.

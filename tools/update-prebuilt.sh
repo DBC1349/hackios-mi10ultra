@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Refresh prebuilt/ from what is built in this tree: the kernel, the loader, our user-space programs
 # and the pieces of the phone's UEFI. With them somebody without the cross toolchain can still make the
 # images and run the system (QEMU or the phone); see README.md.

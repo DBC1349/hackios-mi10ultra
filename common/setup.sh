@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # One-time setup of a HackiOS workspace.
 #
 # HackiOS lives in two repositories that are built as one tree:

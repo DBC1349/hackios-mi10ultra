@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # A second working copy of everything, for working on something else at the same time: its own
 # branch of this repository (a git worktree), its own kernel tree and build, its own images and
 # its own QEMU instance. What is big is shared with this copy through reflinks and hard links

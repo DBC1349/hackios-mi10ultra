@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Give the kernel's build ath11k's descriptions of the messages a WCN6750's firmware speaks, for
 # bsd/dev/redwood_wlfw.c (a stand-in for ath11k's own qmi.c: see there). They are taken out of
 # the driver's sources as they are -- the structures of its qmi.h and the tables of its qmi.c --

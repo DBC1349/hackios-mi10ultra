@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Make ../Mu-Silicium: a clone of Project-Silicium/Mu-Silicium at the commit our port was made on,
 # with the redwood port (this directory) put into it. See README.md here for how to build it.
 set -e

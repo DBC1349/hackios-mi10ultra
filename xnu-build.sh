@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Build XNU for redwood on Linux. Extra make args are passed through.
 source "$(dirname "${BASH_SOURCE[0]}")/xnu-env.sh"
 cd "$XNU_SRC" || exit 1
