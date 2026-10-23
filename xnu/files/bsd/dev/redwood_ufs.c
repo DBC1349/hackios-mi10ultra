@@ -66,6 +66,7 @@ extern void FlushPoC_DcacheRegion(vm_offset_t va, size_t length);   /* osfmk/arm
 #define BLOCK_MAX_PARTS    160
 #define BLOCK_MAX_UNITS    16
 #define BLOCK_PART_UNIT    1u                          /* a whole logical unit, not a partition */
+#define BLOCK_PART_VIRTUAL 2u                          /* darwin as a file of userdata, through the loader's map */
 #define BLOCK_OP_READ      0u
 #define BLOCK_OP_WRITE     1u
 
@@ -1511,9 +1512,19 @@ redwood_ufs_init(void)
 	if (PE_parse_boot_argn("ufs_write", &check, sizeof(check)) && check == 1) {
 		uint32_t offered = ufs_page->write_part_plus_one;
 		uint64_t lba = 0, blocks = 0;
+		uint32_t darwin_file = 0;
 
+		/*
+		 * darwin_file=1: this phone's darwin is a file of userdata that the loader serves block by block
+		 * through the map of where the file lies (xnuloader/darwinfile.c, BLOCK_PART_VIRTUAL): on no unit
+		 * and at no LBA of its own, so those two checks below do not apply -- the loader has checked the
+		 * map and the file's marker -- but its size still has to be darwin_blocks=.
+		 */
+		PE_parse_boot_argn("darwin_file", &darwin_file, sizeof(darwin_file));
 		/* this phone's darwin, when the command line names it (above, UFS_DARWIN_FIRST) */
-		if (PE_parse_boot_argn("darwin_lba", &lba, sizeof(lba)) && PE_parse_boot_argn("darwin_blocks", &blocks, sizeof(blocks))) {
+		if (darwin_file == 1 && PE_parse_boot_argn("darwin_blocks", &blocks, sizeof(blocks)) && blocks >= UFS_DARWIN_BLOCKS_LEAST) {
+			ufs_darwin_blocks = blocks;
+		} else if (PE_parse_boot_argn("darwin_lba", &lba, sizeof(lba)) && PE_parse_boot_argn("darwin_blocks", &blocks, sizeof(blocks))) {
 			if (blocks >= UFS_DARWIN_BLOCKS_LEAST) {
 				ufs_darwin_first = lba;
 				ufs_darwin_blocks = blocks;
@@ -1537,6 +1548,11 @@ redwood_ufs_init(void)
 				why = "the loader offers another partition";
 			} else if (ufs_page->part[i].flags & BLOCK_PART_UNIT) {
 				why = "it is a whole logical unit, not the partition";
+			} else if ((ufs_page->part[i].flags & BLOCK_PART_VIRTUAL) && darwin_file != 1) {
+				why = "the loader serves it as a file of userdata, and the command line does not say darwin_file=1";
+			} else if (ufs_page->part[i].flags & BLOCK_PART_VIRTUAL) {
+				why = ufs_page->part[i].blocks != UFS_DARWIN_BLOCKS ? "it is not the size the command line says" :
+				    ufs_page->part[i].block_size != 4096 ? "its blocks are not 4096 bytes" : NULL;
 			} else if (ufs_page->part[i].unit != 0) {
 				/* the first unit UEFI lists, which this kernel's own driver reads as LUN 0 and
 				 * has compared with the loader's reads; the device path this firmware gives

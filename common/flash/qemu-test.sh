@@ -18,6 +18,10 @@
 #   tampered    the newest bundle's contents changed after it was made: its SHA-256 refuses it
 #   signed      a loader with an owner key pinned: the unsigned newest is refused, the signed older boots
 #   forged      a pinned loader, a bundle signed by another key: refused, nothing boots, the menu stays
+#   file        darwin as a file of userdata (no partition of its own): a map of three extents out of order on
+#               a disk of 512-byte sectors; the bundle boots through the map, the boot state is written through
+#               it, and not one byte of userdata outside the file changes
+#   file-nomark the same file without its marker (deleted and made again, say): no darwin at all, nothing written
 #
 # Each bundle runs the prebuilt kernel with userland's `hello` as its root, so the test needs no files of iOS.
 set -u
@@ -154,6 +158,41 @@ s = f.parse_state(sys.stdin.buffer.read()); sys.exit(0 if s and s['flags'] & f.S
 		run $L "$DOWN$ENTER" "Android's slot is the active one|ab: slots exchanged|ab: not exactly|ab: no unit|nothing written"
 		expect not-ours "Android's slot is the active one already" "!ab: slots exchanged"
 		[ "$(ab)" = "$before" ] || { echo "   the A/B bytes changed: $(ab)"; FAIL=$((FAIL+1)); FAILED="$FAILED not-ours-ab"; } ;;
+	file|file-nomark)
+		# a "phone" whose darwin is a file: boot_a, boot_b, userdata (9 GiB); the file's map, out of order
+		rm -f $W/disk.img; truncate -s 10G $W/disk.img
+		sgdisk -o -n 1:2048:+64M -c 1:boot_a -n 2:0:+64M -c 2:boot_b -n 3:0:0 -c 3:userdata $W/disk.img > /dev/null
+		for bit in 48 49 50 52 53; do sgdisk -A 1:set:$bit $W/disk.img > /dev/null; done
+		sgdisk -A 2:set:54 $W/disk.img > /dev/null
+		dd if=$W/boot-ours.img of=$W/disk.img bs=512 seek=2048 conv=notrunc status=none 2>/dev/null || true
+		UD=$(( $(sgdisk -i 3 $W/disk.img | awk '/First sector/ {print $3}') * 512 ))
+		cat > $W/file.darwin <<JSON
+{"kind": "file", "file": "/data/hackios/darwin.img", "host": "userdata", "blocks": 2097152, "mark": "0123456789abcdef",
+ "extents": [[1300000, 800000], [10, 697152], [697200, 600000]]}
+JSON
+		DARWIN_ID=../$W/file.darwin OUT=../$W/loader-file.efi xnuloader/build.sh > /dev/null || { echo "   no file loader"; FAIL=$((FAIL+1)); return; }
+		python3 common/flash/darwinid.py put $W/file.darwin $W/gen1.img $W/disk.img $UD 2042368
+		if [ $1 = file ]; then
+			python3 common/flash/darwinid.py mark $W/file.darwin $W/mark.img
+			python3 common/flash/darwinid.py put $W/file.darwin $W/mark.img $W/disk.img $UD 2091521
+		fi
+		# the userdata blocks just outside every extent, and its first and last: none may change
+		outside() { for b in 0 9 697162 697199 1297200 1299999 2100000 2300000; do
+			dd if=$W/disk.img bs=4096 skip=$(( UD / 4096 + b )) count=1 status=none | sha256sum | cut -c1-12; done | tr '\n' ' '; }
+		before=$(outside)
+		if [ $1 = file ]; then until_re="Darwin Kernel|loader_return_after expired"; else until_re="Developer mode \(USB, xl\) in 1 s|nothing is written"; fi
+		run $W/loader-file.efi "" "$until_re"
+		if [ $1 = file ]; then
+			expect file "darwin: a file of userdata, 2097152 blocks in 3 extents, marker right" "booting slot 0, generation 1" \
+				"SHA-256 checked" "Darwin Kernel"
+			st=$(python3 common/flash/darwinid.py get $W/file.darwin $W/disk.img $UD 2091520 1 | python3 -c "
+import sys; sys.path.insert(0, 'common/flash'); import bundlefmt as f
+s = f.parse_state(sys.stdin.buffer.read()); print('none' if s is None else 'trying=%(trying)d tries=%(tries)d boots=%(boots)d' % s)")
+			[ "$st" = "trying=1 tries=1 boots=1" ] || { echo "   state through the map: $st"; FAIL=$((FAIL+1)); FAILED="$FAILED file-state"; }
+		else
+			expect file-nomark "no longer carries its marker" "!flash: booting slot" "!a file of userdata, 2097152"
+		fi
+		[ "$(outside)" = "$before" ] || { echo "   userdata outside the file CHANGED"; FAIL=$((FAIL+1)); FAILED="$FAILED $1-outside"; } ;;
 	tampered)
 		disk; cp $W/gen2.img $W/bad.img
 		printf 'X' | dd of=$W/bad.img bs=1 seek=$((4096 + 5000)) conv=notrunc status=none
@@ -183,7 +222,7 @@ s = f.parse_state(sys.stdin.buffer.read()); sys.exit(0 if s and s['flags'] & f.S
 	esac
 }
 
-ALL="boot previous guard fallback android remembered not-ours tampered signed forged"
+ALL="boot previous guard fallback android remembered not-ours tampered signed forged file file-nomark"
 [ $# -gt 0 ] || set -- $ALL
 for s in "$@"; do scenario "$s"; done
 echo "qemu-test: $PASS passed, $FAIL failed${FAILED:+:$FAILED}"

@@ -1477,6 +1477,7 @@ ufs_survey(void)
 #define BLOCK_MAX_PARTS    160
 #define BLOCK_MAX_UNITS    16
 #define BLOCK_PART_UNIT    1u                          /* the entry is a whole logical unit, not a partition */
+#define BLOCK_PART_VIRTUAL 2u                          /* darwin as a file of userdata (darwinfile.c): on no unit of its own */
 #define BLOCK_OP_READ      0u
 #define BLOCK_OP_WRITE     1u
 
@@ -1814,6 +1815,8 @@ hc_init(void)
  * The firmware's configuration tables, by GUID (an ACPI or device tree table among them would say
  * where the storage controller is).
  */
+#include "darwinfile.c"
+
 static void
 block_tables(void)
 {
@@ -1946,6 +1949,25 @@ block_start(void)
 		    bp->name[3] == 'w' && bp->name[4] == 'i' && bp->name[5] == 'n' && bp->name[6] == 0) {
 			block_io2_probe(handles[i], bio);
 		}
+	}
+	/* darwin as a file of userdata: a partition of its own blocks, on no unit (the kernel reads it through here) */
+	if (darwin_file_bio() != NULL && block_shared.parts + nunits < BLOCK_MAX_PARTS) {
+		struct loader_block_part *bp = &block_shared.part[block_shared.parts];
+		static const char darwin_name[] = "darwin";
+
+		memcpy(bp->name, darwin_name, sizeof(darwin_name));
+		bp->block_size = 4096;
+		bp->blocks = DARWIN_FILE_BLOCKS;
+		bp->start_lba = 0;
+		bp->unit = 0xffff;
+		bp->lun = 0xff;
+		bp->flags = BLOCK_PART_VIRTUAL;
+		if (block_write_requested) {
+			block_write_part = (int)block_shared.parts;
+			print("ufs: darwin (a file of %s): its blocks from %d on may be written this run\n", DARWIN_FILE_HOST,
+			    BLOCK_WRITE_FIRST);
+		}
+		block_bios[block_shared.parts++] = darwin_file_bio();
 	}
 	for (uint64_t u = 0; u < nunits; u++) {
 		struct loader_block_part *bp = &block_shared.part[block_shared.parts];

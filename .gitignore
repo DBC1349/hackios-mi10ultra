@@ -45,6 +45,7 @@ __pycache__/
 !/xnuloader/efi.h
 !/xnuloader/flashboot.c
 !/xnuloader/crypto.c
+!/xnuloader/darwinfile.c
 !/xnuloader/identity.h
 !/xnuloader/loader.c
 !/xnuloader/mkidentity.py

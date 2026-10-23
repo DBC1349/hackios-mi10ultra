@@ -129,6 +129,9 @@ fb_find_darwin(void)
 	efi_handle *handles;
 	uint64_t count;
 
+	if (DARWIN_FILE) {
+		return darwin_file_bio();               /* a file of userdata, through its map (darwinfile.c) */
+	}
 	if (EFI_ERROR(BS->locate_handle_buffer(ByProtocol, &part_guid, NULL, &count, &handles))) {
 		return NULL;
 	}
