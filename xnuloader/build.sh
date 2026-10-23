@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Build the XNU loader as a freestanding AArch64 UEFI application.
 set -e
 cd "$(dirname "$0")"

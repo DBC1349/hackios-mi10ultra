@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Build the driver of the phone's Wi-Fi radio for our kernel: ath11k, Qualcomm's driver for the
 # WCN6750 (and its kin) as it is in Linux, unmodified, on a layer that gives it the kernel
 # interfaces it expects. Three things meet here, and only the third is in the repository:

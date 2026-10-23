@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Save the kernel work as it is in the working tree, in the two forms apply.sh puts back:
 #   redwood.patch   the changes to Apple's files (against the tag the work sits on)
 #   files/          the files that are not in Apple's tree, at their paths

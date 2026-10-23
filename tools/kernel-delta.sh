@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # In a workspace made by new-workspace.sh: print, as a patch, what was changed in the kernel tree
 # since the workspace was made (new files included). Apply it elsewhere with "git apply".
 set -e

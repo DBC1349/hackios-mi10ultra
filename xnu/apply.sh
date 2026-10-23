@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Get Apple's XNU sources (the release that iOS 16.5 was built from) and put the redwood
 # work on top of them: redwood.patch changes Apple's files, files/ holds the new ones.
 # usage: xnu/apply.sh [DIR]              (default: $XNU_SRC, else xnu-src/xnu-8796.121.2 next to this directory)

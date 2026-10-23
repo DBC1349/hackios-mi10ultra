@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # git for the hackios-xnu-userland repository that shares this working tree (see common/setup.sh):
 #   common/ugit status | common/ugit add userland/src/init.c | common/ugit commit | common/ugit push
 ROOT=$(dirname "$(readlink -f "$0")")/..

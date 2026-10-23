@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Build and run the tests of the WPA2 handshake's arithmetic (wifi/lx/src/lx_wpa.c) on this
 # machine, under the address and undefined-behaviour sanitizers. Needs Python 3 with the
 # "cryptography" package: the access point the handshakes are held with is reference.py.

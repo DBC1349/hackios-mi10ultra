@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Boot the XNU loader + kernel payload under QEMU (virt, GICv3, UEFI at EL1).
 # usage: run.sh [seconds] [extra qemu args...]
 # env: QEMU_TB_MB           megabytes for QEMU's cache of translated code (default 384; QEMU's own

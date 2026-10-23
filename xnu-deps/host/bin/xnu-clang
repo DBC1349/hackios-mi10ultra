@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # clang wrapper for cross-building XNU on Linux:
 #  - forces an Apple Mach-O target (stock Linux clang defaults to ELF)
 #  - drops flags only Apple's clang understands

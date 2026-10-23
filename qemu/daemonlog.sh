@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Pick one daemon's story out of a run log: its own messages (stderr/os_log on the console), what
 # launchd said about it, its failing system calls and crashes.
 # usage: daemonlog.sh LOG NAME [max lines]

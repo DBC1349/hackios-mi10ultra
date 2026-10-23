@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Put the decompressing half of libdeflate into the kernel tree, as bsd/miscfs/apfs/libdeflate/:
 # the APFS driver inflates the zlib pieces of compressed files with it instead of libkern's zlib.
 #

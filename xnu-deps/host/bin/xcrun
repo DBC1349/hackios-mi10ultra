@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Minimal xcrun replacement for building XNU on Linux
 HB="$(cd "$(dirname "$0")" && pwd)"
 sdk=""; find=""; show=""
