@@ -48,6 +48,10 @@ print(gic[0], gic[1], len(cpus) or 8, shift, hex(small))
 PY
 )
 	echo "new-device: from $DTB: GIC $GIC_DIST / $GIC_REDIST, $CORES cores, MPIDR shift $SHIFT, small cores $SMALL"
+	# where the SoC's blocks are, for the kernel's drivers (bsd/sys/redwood_board.h)
+	BOARD=$(python3 tools/board-from-dt.py "$DTB")
+	sed -i "s|^BOARD_ARGS=.*|BOARD_ARGS=\"$BOARD\"|" "$CONF"
+	echo "new-device: the SoC's blocks: ${BOARD:-none found, the kernel keeps the defaults of the POCO X5 Pro}"
 fi
 
 cat > "$PLATC" <<EOF

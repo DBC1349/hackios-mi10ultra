@@ -49,6 +49,7 @@
 #include <mach/mach_types.h>
 #include <pexpert/pexpert.h>
 #include <sys/redwood_input.h>
+#include <sys/redwood_board.h>
 #include <sys/systm.h>
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
@@ -93,11 +94,11 @@ wr(vm_offset_t address, uint32_t value)
 
 /* ---- the PMIC arbiter ---------------------------------------------------------------------------- */
 
-#define ARB_CORE_PHYS           0x0c440000UL    /* "core": the version, and which peripheral each channel is */
+#define ARB_CORE_PHYS           redwood_board_addr("spmi_core", 0x0c440000UL)    /* "core": the version, and which peripheral each channel is */
 #define ARB_CORE_SIZE           0x1100UL
-#define ARB_CNFG_PHYS           0x0c40a000UL    /* "cnfg": which system owns each channel */
+#define ARB_CNFG_PHYS           redwood_board_addr("spmi_cnfg", 0x0c40a000UL)    /* "cnfg": which system owns each channel */
 #define ARB_CNFG_SIZE           0x1000UL
-#define ARB_OBSERVER_PHYS       0x0e600000UL    /* "obsrvr": 0x10000 per system, 0x80 per channel in it */
+#define ARB_OBSERVER_PHYS       redwood_board_addr("spmi_obsrvr", 0x0e600000UL)    /* "obsrvr": 0x10000 per system, 0x80 per channel in it */
 #define ARB_OBSERVER_SIZE       0x10000UL       /* ours is the first */
 #define ARB_SYSTEM              0               /* who we are to the arbiter: the device tree's "qcom,ee" */
 

@@ -59,6 +59,7 @@
 #include <sys/errno.h>
 #include <sys/param.h>
 #include <sys/proc.h>
+#include <sys/redwood_board.h>
 #include <sys/systm.h>
 #include <sys/sysctl.h>
 #include <vm/vm_kern.h>
@@ -73,7 +74,7 @@ extern void FlushPoC_DcacheRegion(vm_offset_t va, size_t length);
 extern void IOSleep(unsigned int milliseconds);
 extern boolean_t ml_set_interrupts_enabled(boolean_t enable);
 
-#define UFSHC_PHYS          0x1d84000ULL        /* ufshc@1d84000, "ufs_mem", in the phone's Android device tree */
+#define UFSHC_PHYS          ((uint64_t)redwood_board_addr("ufshc", 0x1d84000UL))        /* ufshc@1d84000, "ufs_mem", in the phone's Android device tree */
 #define UFSHC_SIZE          0x3000
 
 /* UFSHCI registers (JESD223). 0x38..0x48, the UIC error codes, clear when read: never read here. */

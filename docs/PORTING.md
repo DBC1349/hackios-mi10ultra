@@ -72,3 +72,12 @@ common/run.sh <codename>
 
 The first useful milestone is the loader's own screen and log over USB (`./xl log`), the next one is the kernel's
 verbose boot text (`-v`), then SpringBoard. Read [checks.md](checks.md) before trusting a "it is not in the log".
+
+## The SoC's blocks: BOARD_ARGS
+
+The kernel's drivers were brought up on the POCO X5 Pro (SM7325), and every block they map -- the CPU frequency
+domains, the temperature sensors, the clock controllers, the display's timing engine, the UFS controller, the
+PMIC arbiter -- defaults to that phone's address. Another phone gives its own on the kernel's command line,
+`board_<block>=0x...` (bsd/sys/redwood_board.h lists them). `common/new-device.sh <codename> <dtb>` reads them out
+of the phone's device tree (`tools/board-from-dt.py`) into the profile's `BOARD_ARGS`, which `common/run.sh` and
+`common/flash/install.sh` pass on. On redwood's own device tree the tool reads back exactly the defaults.

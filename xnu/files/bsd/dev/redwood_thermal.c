@@ -45,13 +45,14 @@
 #include <sys/redwood_input.h>
 #include <sys/redwood_thermal.h>
 #include <sys/sysctl.h>
+#include <sys/redwood_board.h>
 #include <sys/systm.h>
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern void loader_log_putc(char c);
 
-#define TSENS0_TM               0x0c263000UL    /* dt: tsens@c222000, "tsens_tm_physical" */
-#define TSENS1_TM               0x0c265000UL    /* dt: tsens@c223000 */
+#define TSENS0_TM               redwood_board_addr("tsens0", 0x0c263000UL)    /* dt: tsens@c222000, "tsens_tm_physical" */
+#define TSENS1_TM               redwood_board_addr("tsens1", 0x0c265000UL)    /* dt: tsens@c223000 */
 #define TSENS_TM_SIZE           0x1000UL
 #define TSENS_STATUS(sensor)    (0xa0 + 4 * (sensor))
 #define TSENS_VALID             (1u << 21)

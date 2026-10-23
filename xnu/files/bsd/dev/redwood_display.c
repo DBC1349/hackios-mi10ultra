@@ -27,16 +27,17 @@
 #include <machine/machine_routines.h>
 #include <pexpert/pexpert.h>
 #include <sys/redwood_display.h>
+#include <sys/redwood_board.h>
 #include <sys/systm.h>
 
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 
-#define GCC_PHYS                0x00100000UL
+#define GCC_PHYS                redwood_board_addr("gcc", 0x00100000UL)
 #define GCC_DISP_AHB_CBCR       0x27004
-#define DISPCC_PHYS             0x0af00000UL    /* dt: clock-controller@af00000 */
+#define DISPCC_PHYS             redwood_board_addr("dispcc", 0x0af00000UL)    /* dt: clock-controller@af00000 */
 #define DISPCC_MDSS_CORE_GDSCR  0x1004          /* dt: disp_cc_mdss_core_gdsc */
 #define DISPCC_MDSS_AHB_CBCR    0x1050
-#define INTF1_PHYS              0x0ae36000UL    /* dt: mdss_dsi0's mdp_intf_base */
+#define INTF1_PHYS              redwood_board_addr("intf", 0x0ae36000UL)    /* dt: mdss_dsi0's mdp_intf_base */
 #define CBCR_ENABLE             (1u << 0)
 #define CBCR_OFF                (1u << 31)
 #define GDSC_POWER_ON           (1u << 31)

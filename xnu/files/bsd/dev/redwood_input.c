@@ -10,6 +10,7 @@
 #include <sys/errno.h>
 #include <sys/proc.h>
 #include <sys/redwood_input.h>
+#include <sys/redwood_board.h>
 #include <sys/systm.h>
 #include <sys/uio.h>
 #include <pexpert/pexpert.h>
@@ -214,6 +215,7 @@ redwood_input_init(void)
 		printf("redwood-touch: cannot create the device\n");
 	}
 	exit_call = thread_call_allocate(exit_hold_elapsed, NULL);
+	redwood_board_report();
 	redwood_cpufreq_init();
 	redwood_virtio_input_init();
 	redwood_goodix_init();

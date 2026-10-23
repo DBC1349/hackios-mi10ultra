@@ -21,7 +21,10 @@ K=xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bc
 SERIAL=$(adb get-serialno 2>/dev/null | tr -d '\r')
 export DARWIN_ID=phones/$SERIAL.darwin
 [ -f "$DARWIN_ID" ] || die "no $DARWIN_ID: this phone's darwin has not been cut yet (tools/userdata-carve.py, then darwinid.py from-gpt)"
-FLASH_BOOTARGS="$FLASH_BOOTARGS $(python3 common/flash/darwinid.py bootargs $DARWIN_ID)"
+FLASH_BOOTARGS="$FLASH_BOOTARGS $BOARD_ARGS $(python3 common/flash/darwinid.py bootargs $DARWIN_ID)"
+# darwin as a file: the kernel's own UFS driver does not read along its map yet -- the loader serves it
+python3 -c "import json,sys; sys.exit(json.load(open('$DARWIN_ID')).get('kind') != 'file')" &&
+	FLASH_BOOTARGS=$(echo "$FLASH_BOOTARGS" | sed 's/ ufs_native=1//')
 xnuloader/build.sh > /dev/null || die "the loader did not build"
 if [ -z "$SKIP_BUILD" ]; then
 	have_userland
