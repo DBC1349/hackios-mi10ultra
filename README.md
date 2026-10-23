@@ -36,7 +36,7 @@ Photographed on the phone, the Adreno GPU drawing (`gpu=1`). More in [Screenshot
 | Works | Does not work (yet) |
 |---|---|
 | Lock screen, swipe to unlock, home screen with all icons (two pages), stock iOS 16 wallpapers | Cellular, Bluetooth |
-| System gestures: swipe up (home, app switcher), edge swipe (back), Control Center | Charging under our kernel (the phone only discharges) |
+| System gestures: swipe up (home, app switcher), edge swipe (back), Control Center | Fast charging (PD/PPS); the charger is read, not yet driven |
 | Apps: Settings, Clock, Calendar, Photos, Notes, Safari and more; widgets (Weather, Calendar) on the phone | Metal for apps (in progress: 293 of 456 system shaders already run on the Adreno, see `docs/air.md` in hackios-xnu-userland) |
 | Phone touchscreen (Goodix GT9916), multitouch, wake on touch; real power and volume keys | App Store content and Apple ID sign-in (no Secure Enclave; FairPlay daemon exits) |
 | Up to 8 CPU cores (`cpus=8`), big core at 2.4 GHz, ~20 s to the lock screen | Video and Live Photo recording |
@@ -44,6 +44,8 @@ Photographed on the phone, the Adreno GPU drawing (`gpu=1`). More in [Screenshot
 | Wi-Fi (WCN6750, ath11k): join from Settings, Safari over Wi-Fi, 55–90 Mbit/s | |
 | Sound (speakers, main microphone), camera in Camera.app (front/rear, preview, focus, HEIC photos) | |
 | Data that iOS writes survives a reboot (`var_store=1 ufs_write=1`); iOS root volume on the phone's flash | |
+| Charging with `adsp=1`: the audio DSP's charger takes current from USB (seen: +0.4 A from a computer's port), battery health and charger type in `sysctl kern.hackios.charger` | |
+| Frames follow the panel's own scan (`fb_scan=1`): 120 Hz, each frame lands whole in one refresh -- no tearing | |
 | Sileo + Procursus (dpkg, apt), tweaks, SSH | |
 
 It is a research bench, not a ROM: a session lasts a given number of seconds, then the kernel returns to the
