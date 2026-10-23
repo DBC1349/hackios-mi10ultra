@@ -35,7 +35,7 @@ fi
 # signed with the owner key when there is one (common/flash/ownerkey.py); OWNER_KEY=file names another
 SIGN=; KEYFILE=${OWNER_KEY:-$HOME/.hackios/owner.key}; [ -f "$KEYFILE" ] && SIGN="--sign $KEYFILE"
 LABEL="$(git describe --tags --always 2>/dev/null || echo build) $(date +%Y-%m-%d)"
-# flashboot.apfs is the root the kernel starts from (md0, resident), root.apfs the small image on /redwood (md1)
+# flashboot.apfs is the root the kernel starts from (md0, resident), root.apfs the small image on /hackios (md1)
 python3 common/flash/mkbundle.py -o out/$DEVICE-bundle.img --kernel $K --resident userland/flashboot.apfs --ramdisk userland/root.apfs \
 	--cmdline "$FLASH_BOOTARGS" --label "$LABEL" $SIGN
 

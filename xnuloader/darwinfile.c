@@ -30,7 +30,7 @@ static uint64_t df_start[DARWIN_FILE_EXTENTS];  /* darwin's first block in each 
 static int df_state;                            /* 0 not tried, 1 there, -1 not there */
 
 /*
- * The map as the kernel reads it (bsd/dev/redwood_ufs.c, darwin_map_pa= on its command line): with
+ * The map as the kernel reads it (bsd/dev/hk_ufs.c, darwin_map_pa= on its command line): with
  * ufs_native=1 the kernel reads the storage through its own driver, LUN by LUN, and darwin -- on no unit of
  * its own -- through this, along the extents of the host partition (part[host] of the block service's
  * table). Written once before the kernel starts; one page, in the loader's memory, which stays.

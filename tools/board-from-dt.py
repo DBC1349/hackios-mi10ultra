@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-The board_ addresses of a phone (bsd/sys/redwood_board.h), read out of its own device tree.
+The board_ addresses of a phone (bsd/sys/hk_board.h), read out of its own device tree.
 
 usage: tools/board-from-dt.py DEVICE.dtb        prints  board_epss=0x... board_tsens0=0x... ...
        (common/new-device.sh puts that into the profile as BOARD_ARGS)

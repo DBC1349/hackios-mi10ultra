@@ -5,7 +5,7 @@
  * The display is the framebuffer the boot loader left us (the one the kernel's text console
  * draws on). There is no hardware behind it that we drive: a "swap" copies the pixels of the
  * surfaces of its layers into that memory, and "vsync" is a timer -- or, on the phone with
- * fb_scan=1, the panel's own scan (bsd/dev/redwood_display.c): then each frame is copied where
+ * fb_scan=1, the panel's own scan (bsd/dev/hk_display.c): then each frame is copied where
  * the scan lets it land whole in one refresh (no tearing), the rate is the panel's (120 Hz), and
  * the refresh notifications come when the panel's frames begin.
  *
@@ -43,17 +43,17 @@ extern struct vc_info vinfo;            /* the boot framebuffer, as the text con
 
 #include "MiniIOSurface.h"
 
-extern "C" void redwood_tl(const char * format, ...) __printflike(1, 2);
-/* the panel's scan (bsd/dev/redwood_display.c; sys/redwood_display.h, which iokit/ does not see) */
-struct redwood_display_scan {
+extern "C" void hk_tl(const char * format, ...) __printflike(1, 2);
+/* the panel's scan (bsd/dev/hk_display.c; sys/hk_display.h, which iokit/ does not see) */
+struct hk_display_scan {
 	int ok;
 	uint32_t lines, shown, millihz;
 	uint64_t line_ns, frame_ns;
 };
-extern "C" int redwood_display_scan_start(void);
-extern "C" const struct redwood_display_scan * redwood_display_scan(void);
-extern "C" int redwood_display_wait_lines(uint32_t first, uint32_t last, uint64_t limit_ns);
-extern "C" uint64_t redwood_display_next_frame_ns(void);
+extern "C" int hk_display_scan_start(void);
+extern "C" const struct hk_display_scan * hk_display_scan(void);
+extern "C" int hk_display_wait_lines(uint32_t first, uint32_t last, uint64_t limit_ns);
+extern "C" uint64_t hk_display_next_frame_ns(void);
 
 /* IOConnectCallMethod selectors of the framebuffer user client (iOS 16.5) */
 enum {
@@ -186,7 +186,7 @@ swapQueue(void)
  * Boot-arg touch_lat=1: a line for every swap handed over ("tl: s ID at US") and for every frame
  * put on the panel ("tl: v ID ready US shown US done US": the GPU done with it, its beat come, the
  * pixels in the panel's memory), in microseconds of mach_absolute_time, for measuring how long a
- * touch takes to show (tools/latency.py; the touch's own lines: bsd/dev/redwood_input.c).
+ * touch takes to show (tools/latency.py; the touch's own lines: bsd/dev/hk_input.c).
  */
 static TUNABLE(uint32_t, gTouchLat, "touch_lat", 0);
 
@@ -498,11 +498,11 @@ IOMobileFramebuffer::start(IOService * provider)
 
 	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
 	/* for who draws with the GPU (userland/src/eagl.c): a frame need not be waited for before it is handed over */
-	setProperty("RedwoodWaitsForGPU", kOSBooleanTrue);
+	setProperty("HKWaitsForGPU", kOSBooleanTrue);
 	/* the panel's scan, if it can be read: its rate is then the one published, unless fb_hz= is given */
-	if (redwood_display_scan_start()) {
+	if (hk_display_scan_start()) {
 		uint32_t hz;
-		const struct redwood_display_scan * scan = redwood_display_scan();
+		const struct hk_display_scan * scan = hk_display_scan();
 
 		if (!PE_parse_boot_argn("fb_hz", &hz, sizeof(hz)) && scan != NULL) {
 			gScanHz = (scan->millihz + 500) / 1000;
@@ -901,7 +901,7 @@ IOMobileFramebuffer::present(const uint8_t * swap)
 	nanoseconds_to_absolutetime(FRAME_PAUSE * NSEC_PER_MSEC, &pause);
 	clock_interval_to_deadline(SWAP_HELD_MS, kMillisecondScale, &deadline);
 	if (gTouchLat) {
-		redwood_tl("tl: s %u at %llu\n", swapWord(swap, SWAP_ID), micros(now));
+		hk_tl("tl: s %u at %llu\n", swapWord(swap, SWAP_ID), micros(now));
 	}
 	IOLockLock(fSwapLock);
 	fStatSwapsLate += fSwapTime != 0 && now - fSwapTime > period && now - fSwapTime < pause;
@@ -976,7 +976,7 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 	}
 	fStatWaiting += mach_absolute_time() - began;
 	began = ready = mach_absolute_time();
-	if (redwood_display_scan() != NULL) {
+	if (hk_display_scan() != NULL) {
 		/*
 		 * Where the copy may start (fb_scan): every band of rows (fThreads of them, drawn side by side, each top
 		 * to bottom in about fDrawNs) has to stay behind the scan in this refresh -- written after the scan has
@@ -986,7 +986,7 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 		 *   from  max(shown (n-1)/n, shown - D/line) and   up to  lines + shown/n - D/line.
 		 * Waited for, a frame and a half at most: a frame is never held longer than that for it.
 		 */
-		const struct redwood_display_scan * scan = redwood_display_scan();
+		const struct hk_display_scan * scan = hk_display_scan();
 		uint64_t d = fDrawNs != 0 ? fDrawNs : scan->frame_ns / 3, dl = d / scan->line_ns;
 		uint32_t n = fThreads != 0 ? fThreads : 1, S = scan->shown, T = scan->lines;
 		uint64_t lo = (uint64_t) S * (n - 1) / n, hi = (uint64_t) T + S / n;
@@ -1002,7 +1002,7 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 			hi = T;
 		}
 		fStatScanWaits++;
-		if (!redwood_display_wait_lines((uint32_t) lo, (uint32_t) hi, scan->frame_ns * 3 / 2)) {
+		if (!hk_display_wait_lines((uint32_t) lo, (uint32_t) hi, scan->frame_ns * 3 / 2)) {
 			fStatScanMissed++;
 		}
 		fBeat = began = mach_absolute_time();
@@ -1111,7 +1111,7 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 	}
 	fSwapsShown++;
 	if (gTouchLat) {
-		redwood_tl("tl: v %u ready %llu shown %llu done %llu\n", swapWord(swap, SWAP_ID), micros(ready), micros(shown),
+		hk_tl("tl: v %u ready %llu shown %llu done %llu\n", swapWord(swap, SWAP_ID), micros(ready), micros(shown),
 		    micros(drawn));
 	}
 	if (layers != fLayersShown) {
@@ -1306,11 +1306,11 @@ IOMobileFramebufferUserClient::armVSync(void)
 
 	/* one refresh after the last, not after whenever we got round to this: the rate does not drift */
 	nanoseconds_to_absolutetime(NSEC_PER_SEC / refreshHz(), &period);
-	if (redwood_display_scan() != NULL) {
+	if (hk_display_scan() != NULL) {
 		/* fb_scan: when the panel's next frame begins, by its scan -- locked to it, never drifting */
 		uint64_t ahead;
 
-		nanoseconds_to_absolutetime(redwood_display_next_frame_ns(), &ahead);
+		nanoseconds_to_absolutetime(hk_display_next_frame_ns(), &ahead);
 		fVSyncTime = now + (ahead != 0 ? ahead : period);
 		thread_call_enter_delayed(fVSyncCall, fVSyncTime);
 		return;
@@ -1432,7 +1432,7 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
 
 	case kFBMethodSwapWait:                         /* a swap is on the screen as soon as it is made */
 		if (gTouchLat) {
-			redwood_tl("tl: w %llu %#llx %#llx at %llu\n", args->scalarInputCount > 0 ? in[0] : 0,
+			hk_tl("tl: w %llu %#llx %#llx at %llu\n", args->scalarInputCount > 0 ? in[0] : 0,
 			    args->scalarInputCount > 1 ? in[1] : 0, args->scalarInputCount > 2 ? in[2] : 0, micros(mach_absolute_time()));
 		}
 		return kIOReturnSuccess;

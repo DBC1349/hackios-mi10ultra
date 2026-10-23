@@ -1,10 +1,10 @@
 /*
- * The thermal governor (xnu/files/bsd/sys/redwood_thermal.h) on the computer: scenarios with
+ * The thermal governor (xnu/files/bsd/sys/hk_thermal.h) on the computer: scenarios with
  * temperatures made up tick by tick, and what must come of each. Run: tools/thermal-test/run.sh
  */
 #include <stdio.h>
 #include <stdlib.h>
-#include "../../xnu/files/bsd/sys/redwood_thermal.h"
+#include "../../xnu/files/bsd/sys/hk_thermal.h"
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { printf("FAIL %s:%d: ", __func__, __LINE__); printf(__VA_ARGS__); printf("\n"); failures++; } } while (0)
@@ -16,7 +16,7 @@ static void
 fill(int16_t *z, int t, int group, int hot)
 {
 	for (int i = 0; i < THERMAL_ZONES; i++) {
-		z[i] = (int16_t)(redwood_thermal_zones[i].domain == group ? hot : t);
+		z[i] = (int16_t)(hk_thermal_zones[i].domain == group ? hot : t);
 	}
 }
 
@@ -42,7 +42,7 @@ prime_core_hot_slows_only_it(void)
 	CHECK(f & THERMAL_CAPS_CHANGED, "nothing was slowed");
 	CHECK(g.cap[2] == 21 && g.cap[1] == 20 && g.cap[0] == 15, "caps %d %d %d", g.cap[0], g.cap[1], g.cap[2]);
 	CHECK(g.level == THERMAL_HEAVY, "level %d", g.level);
-	CHECK(redwood_thermal_zones[g.hottest].domain == 2, "hottest is %s", redwood_thermal_zones[g.hottest].name);
+	CHECK(hk_thermal_zones[g.hottest].domain == 2, "hottest is %s", hk_thermal_zones[g.hottest].name);
 }
 
 static void

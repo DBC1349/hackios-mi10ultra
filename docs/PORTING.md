@@ -48,11 +48,11 @@ Rebuild with `xnuloader/build.sh`; QEMU must still pick `qemu-virt` (no match = 
 What is generic: GICv3, the timer, PSCI SMP, the display (the UEFI's framebuffer), APFS and ramfs, the driver
 replacements, the return-to-loader path. What is redwood-specific and needs looking at:
 
-- **touch**: `bsd/dev/redwood_goodix.c` (Goodix GT9916 over bit-banged SPI) — another panel needs its own driver
-  feeding `/dev/redwood-touch` (`bsd/dev/redwood_input.c`);
-- **buttons, CPU frequency, watchdog**: GPIO/PMIC numbers and the EPSS block in `redwood_input.c`,
-  `redwood_cpufreq.c`, `osfmk/arm64/loader_return.c`;
-- **GPU / Wi-Fi / sound**: `redwood_adreno.c` (Adreno 642L), `redwood_wifi.c` (WCN6750 + ath11k), `redwood_audio.c`
+- **touch**: `bsd/dev/hk_goodix.c` (Goodix GT9916 over bit-banged SPI) — another panel needs its own driver
+  feeding `/dev/hk-touch` (`bsd/dev/hk_input.c`);
+- **buttons, CPU frequency, watchdog**: GPIO/PMIC numbers and the EPSS block in `hk_input.c`,
+  `hk_cpufreq.c`, `osfmk/arm64/loader_return.c`;
+- **GPU / Wi-Fi / sound**: `hk_adreno.c` (Adreno 642L), `hk_wifi.c` (WCN6750 + ath11k), `hk_audio.c`
   — the same Qualcomm subsystems (SMEM, SMP2P, GLINK, QRTR, QMI) are reused, the addresses and firmware differ.
 
 Start with no extras: the system boots to the lock screen with only the framebuffer, touch and the CPU.
@@ -78,6 +78,6 @@ verbose boot text (`-v`), then SpringBoard. Read [checks.md](checks.md) before t
 The kernel's drivers were brought up on the POCO X5 Pro (SM7325), and every block they map -- the CPU frequency
 domains, the temperature sensors, the clock controllers, the display's timing engine, the UFS controller, the
 PMIC arbiter -- defaults to that phone's address. Another phone gives its own on the kernel's command line,
-`board_<block>=0x...` (bsd/sys/redwood_board.h lists them). `common/new-device.sh <codename> <dtb>` reads them out
+`board_<block>=0x...` (bsd/sys/hk_board.h lists them). `common/new-device.sh <codename> <dtb>` reads them out
 of the phone's device tree (`tools/board-from-dt.py`) into the profile's `BOARD_ARGS`, which `common/run.sh` and
 `common/flash/install.sh` pass on. On redwood's own device tree the tool reads back exactly the defaults.

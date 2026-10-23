@@ -1,6 +1,6 @@
 # Thermal service and sensors
 
-## Thermal service (kernel: `bsd/dev/redwood_thermal.c`, userland: `thermald`)
+## Thermal service (kernel: `bsd/dev/hk_thermal.c`, userland: `thermald`)
 
 With `cpufreq=1` every core this kernel uses runs at the top of its frequency table, and nothing else would ever
 slow it down. The thermal service is the governor that Android's thermal engine would otherwise be:
@@ -17,8 +17,8 @@ slow it down. The thermal service is the governor that Android's thermal engine 
 | iOS | `thermald` posts the level as `com.apple.system.thermalpressurelevel`, so `ProcessInfo.thermalState` changes in apps |
 
 ```sh
-sysctl kern.redwood.thermal            # the table: every sensor, every group of cores
-sysctl kern.redwood.thermal_pressure   # 0 nominal, 1 moderate, 2 heavy, 3 trapping, 4 sleeping
+sysctl kern.hackios.thermal            # the table: every sensor, every group of cores
+sysctl kern.hackios.thermal_pressure   # 0 nominal, 1 moderate, 2 heavy, 3 trapping, 4 sleeping
 thermald show                          # the same table, from the userland
 ```
 
@@ -39,15 +39,15 @@ framework (Qualcomm's "SEE"), reached through the QMI service 400 over QRTR. Wha
 
 | Step | State |
 |---|---|
-| the DSP started, GLINK, QRTR hello, the DSP's services listed | done (`adsp=1`, `bsd/dev/redwood_adsp.c`) |
-| which services it offers and which it looks for on our side | `sysctl kern.redwood.adsp_services` (new) |
+| the DSP started, GLINK, QRTR hello, the DSP's services listed | done (`adsp=1`, `bsd/dev/hk_adsp.c`) |
+| which services it offers and which it looks for on our side | `sysctl kern.hackios.adsp_services` (new) |
 | QRTR ports of our own on the DSP's channel (for any QMI client) | to do |
 | the service locator and notifier the DSP looks for (its sensor domain waits for them) | to do |
 | the sensor registry the DSP reads from the phone's Android partitions | to do |
 | a SEE client (service 400): find the sensors, stream their samples | to do |
 | the samples to iOS as the HID events CoreMotion reads | to do |
 
-The next run on the phone with `adsp=1` answers the first open question: `sysctl kern.redwood.adsp_services` shows
+The next run on the phone with `adsp=1` answers the first open question: `sysctl kern.hackios.adsp_services` shows
 whether service 400 appears and what the DSP is waiting for.
 
 ## Location (GPS)
