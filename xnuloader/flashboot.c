@@ -4,41 +4,78 @@
  * Included by loader.c. An installed phone boots without a computer: the UEFI in the spare A/B slot's
  * boot partition starts this loader with no payload, and the loader
  *
- *   1. shows a menu -- HackiOS (the default, after a few seconds), Android, or developer mode (the USB
- *      link that `xl` talks to, as `xl enter` gives);
+ *   1. shows a menu -- HackiOS (the default, after a few seconds), the previous HackiOS when there is
+ *      one, Android, or developer mode (the USB link that `xl` talks to, as `xl enter` gives);
  *   2. for HackiOS reads the boot bundle -- the kernel, the boot volume and the command line, the same
- *      "XNUP" container `xl` sends -- from the boot area of darwin into the payload window and runs it
- *      with no time limit: a session lasts until the phone is switched off or restarted;
+ *      "XNUP" container `xl` sends -- from the boot area of darwin into the payload window, checks it and
+ *      runs it with no time limit: a session lasts until the phone is switched off or restarted;
  *   3. for Android makes the other slot active again and resets.
  *
  * The boot area is the free stretch of darwin between the cryptexes and the var store's slots (README of
  * the userland repository: "Data that survives a reboot"): two bundle slots used in turn, each a header
- * block and the container behind it. An update writes the slot that does not hold the newest good bundle
- * -- zeroed header first, container, header last -- so an update that is cut off loses the update and
- * not the phone: the other slot still boots. The host side is common/flash/mkbundle.py.
+ * block and the container behind it, and one block of boot state (formats: common/flash/bundlefmt.py).
+ * An update writes the slot that does not hold the newest good bundle -- zeroed header first, container,
+ * header last -- so an update that is cut off loses the update and not the phone: the other slot still
+ * boots.
+ *
+ * What is checked before a bundle runs: the header's own sum (a torn header is no header), the SHA-256 of
+ * the container, and -- when the loader was built with an owner key pinned (common/flash/ownerkey.py) --
+ * the Ed25519 signature of the header by that key. A bundle that fails any of them is not run.
+ *
+ * The boot guard: before it starts a bundle the loader counts the start in the boot state, and iOS says
+ * it came up (userland: var_store bootok, from the var store's job a minute into the run). A generation
+ * that was started FB_MAX_TRIES times in a row without coming up is skipped by the countdown: the
+ * previous one boots instead, and when that has failed too, Android. A choice made with the keys is
+ * always honoured -- the person holding the phone decides -- and still counted.
  *
  * Android's A/B slots are switched the way Qualcomm's boot control does it: the A/B byte of the GPT
  * attributes of boot_a and boot_b (bits 48..55: priority, active, retry count, successful, unbootable).
  * The loader never invents those bits: going back to Android it exchanges the two entries' A/B bytes,
  * which is exactly the state the phone had before `bootctl set-active-boot-slot` sent it here. It checks
  * the state first (one of the two active, and the other one), writes the backup GPT before the primary
- * one, and reads both back. Nothing else outside darwin is ever written.
+ * one, and reads both back. Outside darwin's boot area nothing else is ever written.
  */
+
+#include "crypto.c"
+#ifdef OWNER_KEY_FILE
+#include OWNER_KEY_FILE             /* a key for one build (common/flash/qemu-test.sh) */
+#else
+#include "owner_key.h"              /* xnuloader/build.sh makes an unpinned one when there is none */
+#endif
 
 #define FB_BLOCK          4096ULL                 /* the boot area is laid out in darwin's 4 KiB blocks */
 #define FB_AREA_FIRST     2042368ULL              /* = BLOCK_WRITE_FIRST: right after both cryptexes */
 #define FB_SLOT_BLOCKS    24576ULL                /* 96 MiB a slot; two slots end at 2091520 < 2097152 (var store) */
 #define FB_SLOTS          2
+#define FB_STATE_BLOCK    (FB_AREA_FIRST + FB_SLOTS * FB_SLOT_BLOCKS)
 #define FB_MENU_SECONDS   5
+#define FB_MAX_TRIES      3
+#define FB_SIGNED         1ULL
+#define FB_HOLD           1u
 
-static const char fb_magic[8] = { 'H', 'K', 'B', 'O', 'O', 'T', '0', '1' };
+static const char fb_magic[8] = { 'H', 'K', 'B', 'O', 'O', 'T', '0', '2' };
+static const char fb_state_magic[8] = { 'H', 'K', 'S', 'T', 'A', 'T', 'E', '1' };
 
 struct fb_header {
 	char magic[8];
 	uint64_t generation;                    /* the newest good slot wins */
 	uint64_t size;                          /* bytes of container behind the header block */
-	uint64_t sum;                           /* FNV-1a 64 of the container */
-	uint64_t header_sum;                    /* FNV-1a 64 of the four fields above */
+	uint64_t flags;                         /* FB_SIGNED */
+	char label[32];                         /* for the menu */
+	uint8_t sha256[32];                     /* of the container */
+	uint8_t signature[64];                  /* Ed25519 over the 96 bytes above */
+	uint64_t header_sum;                    /* FNV-1a 64 of the 160 bytes above */
+};
+
+struct fb_state {
+	char magic[8];
+	uint64_t trying;                        /* the generation started last */
+	uint32_t tries;                         /* started that many times in a row, not come up */
+	uint32_t flags;                         /* FB_HOLD: the previous version, asked for (flashctl rollback) */
+	uint64_t good;                          /* the last generation that came up */
+	uint64_t boots;                         /* starts of HackiOS */
+	uint64_t bad;                           /* a generation given up on: the countdown skips it */
+	uint64_t sum;                           /* FNV-1a 64 of the 48 bytes above */
 };
 
 typedef struct { uint16_t scan, unicode; } efi_input_key;
@@ -47,6 +84,16 @@ typedef struct efi_simple_text_in {
 	efi_status (EFIAPI *read_key_stroke)(struct efi_simple_text_in *self, efi_input_key *key);
 	void *wait_for_key;
 } efi_simple_text_in;
+
+/* what the boot area holds, read once before the menu */
+static struct {
+	efi_block_io *bio;
+	struct fb_header hdr[FB_SLOTS];
+	int ok[FB_SLOTS];                       /* the header is sound (and signed, when a key is pinned) */
+	int newest, older;                      /* slot indices, -1 when there is none */
+	struct fb_state st;
+	int have_state;
+} fb;
 
 static uint64_t
 fb_fnv(const uint8_t *p, uint64_t n, uint64_t h)
@@ -111,64 +158,207 @@ fb_read(efi_block_io *bio, uint64_t blk, void *dst, uint64_t bytes)
 }
 
 static int
-fb_header_ok(const struct fb_header *h)
+fb_header_sound(const struct fb_header *h)
 {
 	return memcmp(h->magic, fb_magic, sizeof(fb_magic)) == 0 && h->size > 16 &&
 	    h->size <= PAYLOAD_MAX_SIZE - 0x100000ULL && h->size <= (FB_SLOT_BLOCKS - 1) * FB_BLOCK &&
-	    fb_fnv((const uint8_t *)h, 32, 0xcbf29ce484222325ULL) == h->header_sum;
+	    fb_fnv((const uint8_t *)h, 160, 0xcbf29ce484222325ULL) == h->header_sum;
 }
 
-/*
- * Put the newest good bundle in the payload window. Returns 1 with the container at PAYLOAD_BASE, 0 when
- * there is none (nothing installed, both slots torn): the caller then stays in the menu.
- */
+/* the owner's signature: required when a key is pinned, otherwise only reported */
 static int
-fb_load_bundle(void)
+fb_header_trusted(int s, const struct fb_header *h)
 {
-	efi_block_io *bio = fb_find_darwin();
-	struct fb_header hdr[FB_SLOTS];
-	int order[FB_SLOTS] = { 0, 1 };
-	uint64_t addr = PAYLOAD_BASE;
+	if (!OWNER_KEY_PINNED) {
+		return 1;
+	}
+	if (!(h->flags & FB_SIGNED)) {
+		print("flash: boot slot %d: not signed, and this loader takes only bundles signed by key %s\n",
+		    (uint64_t)s, owner_key_fp);
+		return 0;
+	}
+	if (!ed25519_verify(h->signature, (const uint8_t *)h, 96, owner_key)) {
+		print("flash: boot slot %d: the signature is not by key %s: REFUSED\n", (uint64_t)s, owner_key_fp);
+		return 0;
+	}
+	return 1;
+}
 
-	if (bio == NULL) {
+static int
+fb_state_sound(const struct fb_state *st)
+{
+	return memcmp(st->magic, fb_state_magic, sizeof(fb_state_magic)) == 0 &&
+	    fb_fnv((const uint8_t *)st, 48, 0xcbf29ce484222325ULL) == st->sum;
+}
+
+/* the boot state back into darwin, and read back; a guard that cannot write is said so and boots anyway */
+static int
+fb_state_write(void)
+{
+	uint64_t bs = fb.bio->media->block_size, lba = FB_STATE_BLOCK * FB_BLOCK / bs;
+
+	memcpy(fb.st.magic, fb_state_magic, sizeof(fb_state_magic));
+	fb.st.sum = fb_fnv((const uint8_t *)&fb.st, 48, 0xcbf29ce484222325ULL);
+	memset(ufs_buffer, 0, FB_BLOCK);
+	memcpy(ufs_buffer, &fb.st, sizeof(fb.st));
+	if (EFI_ERROR(fb.bio->write_blocks(fb.bio, fb.bio->media->media_id, lba, FB_BLOCK, ufs_buffer))) {
+		print("flash: the boot state could not be written: the boot guard is off for this start\n");
+		return 0;
+	}
+	if (fb.bio->flush_blocks) {
+		fb.bio->flush_blocks(fb.bio);
+	}
+	if (!fb_read(fb.bio, FB_STATE_BLOCK, ufs_buffer, FB_BLOCK) || memcmp(ufs_buffer, &fb.st, sizeof(fb.st)) != 0) {
+		print("flash: the boot state did not read back the same: the boot guard is off for this start\n");
+		return 0;
+	}
+	return 1;
+}
+
+/* Read both headers and the boot state. 0 when there is no darwin. */
+static int
+fb_scan(void)
+{
+	memset(&fb, 0, sizeof(fb));
+	fb.newest = fb.older = -1;
+	fb.bio = fb_find_darwin();
+	if (fb.bio == NULL) {
 		print("flash: no darwin partition: HackiOS is not installed on this device\n");
 		return 0;
 	}
+	print("flash: loader %s\n", OWNER_KEY_PINNED ? "with an owner key pinned: signed bundles only" :
+	    "without an owner key: unsigned bundles are taken (common/flash/ownerkey.py)");
+	if (OWNER_KEY_PINNED) {
+		print("flash: owner key %s\n", owner_key_fp);
+	}
 	for (int s = 0; s < FB_SLOTS; s++) {
-		if (!fb_read(bio, FB_AREA_FIRST + s * FB_SLOT_BLOCKS, ufs_buffer, FB_BLOCK)) {
-			memset(&hdr[s], 0, sizeof(hdr[s]));
+		struct fb_header *h = &fb.hdr[s];
+
+		if (fb_read(fb.bio, FB_AREA_FIRST + s * FB_SLOT_BLOCKS, ufs_buffer, FB_BLOCK)) {
+			memcpy(h, ufs_buffer, sizeof(*h));
+		}
+		h->label[sizeof(h->label) - 1] = 0;
+		fb.ok[s] = fb_header_sound(h) && fb_header_trusted(s, h);
+		if (fb.ok[s]) {
+			print("flash: boot slot %d: generation %d \"%s\", %d bytes, %s\n", (uint64_t)s, h->generation,
+			    h->label, h->size, (h->flags & FB_SIGNED) ? "signed" : "unsigned");
+		} else {
+			print("flash: boot slot %d: empty, torn or refused\n", (uint64_t)s);
+		}
+	}
+	for (int s = 0; s < FB_SLOTS; s++) {
+		if (!fb.ok[s]) {
 			continue;
 		}
-		memcpy(&hdr[s], ufs_buffer, sizeof(hdr[s]));
-		print("flash: boot slot %d: %s, generation %d, %d bytes\n", (uint64_t)s,
-		    fb_header_ok(&hdr[s]) ? "good header" : "empty or torn", hdr[s].generation, hdr[s].size);
+		if (fb.newest < 0 || fb.hdr[s].generation > fb.hdr[fb.newest].generation) {
+			fb.older = fb.newest;
+			fb.newest = s;
+		} else {
+			fb.older = s;
+		}
 	}
-	if (fb_header_ok(&hdr[1]) && (!fb_header_ok(&hdr[0]) || hdr[1].generation > hdr[0].generation)) {
-		order[0] = 1; order[1] = 0;
+	if (fb_read(fb.bio, FB_STATE_BLOCK, ufs_buffer, FB_BLOCK)) {
+		memcpy(&fb.st, ufs_buffer, sizeof(fb.st));
 	}
+	fb.have_state = fb_state_sound(&fb.st);
+	if (!fb.have_state) {
+		memset(&fb.st, 0, sizeof(fb.st));
+	}
+	print("flash: boot state: %s, last started %d (%d times), last up %d, given up on %d, %d starts%s\n",
+	    fb.have_state ? "kept" : "new", fb.st.trying, (uint64_t)fb.st.tries, fb.st.good, fb.st.bad,
+	    fb.st.boots, (fb.st.flags & FB_HOLD) ? ", holding to the previous version" : "");
+	return 1;
+}
+
+/* would the countdown boot slot s? (a generation that keeps failing to come up: no) */
+static int
+fb_guard_allows(int s)
+{
+	uint64_t g = fb.hdr[s].generation;
+
+	if (g == fb.st.bad) {
+		return 0;
+	}
+	return !(g == fb.st.trying && fb.st.tries >= FB_MAX_TRIES && fb.st.good != g);
+}
+
+/* count the start of slot s in the boot state */
+static void
+fb_count_start(int s)
+{
+	uint64_t g = fb.hdr[s].generation;
+
+	if (fb.st.trying != g && fb.st.tries >= FB_MAX_TRIES && fb.st.good != fb.st.trying) {
+		fb.st.bad = fb.st.trying;               /* the one being left: remembered as given up on */
+	}
+	if (fb.st.trying == g) {
+		fb.st.tries++;
+	} else {
+		fb.st.trying = g;
+		fb.st.tries = 1;
+	}
+	fb.st.boots++;
+	if (fb_state_write()) {
+		print("flash: start %d of generation %d counted (it is given up on after %d without coming up)\n",
+		    (uint64_t)fb.st.tries, g, (uint64_t)FB_MAX_TRIES);
+	}
+}
+
+/*
+ * The slot the countdown takes: the newest the guard allows (the older first when held), -1 when the
+ * guard allows none -- every installed generation has failed to come up.
+ */
+static int
+fb_auto_slot(void)
+{
+	int first = fb.newest, second = fb.older;
+
+	if ((fb.st.flags & FB_HOLD) && second >= 0) {
+		first = fb.older;
+		second = fb.newest;
+	}
+	for (int k = 0; k < 2; k++) {
+		int s = k == 0 ? first : second;
+		if (s < 0 || !fb.ok[s]) {               /* none there, or refused at load (its SHA-256) */
+			continue;
+		}
+		if (fb_guard_allows(s)) {
+			return s;
+		}
+		print("flash: generation %d did not come up %d times: skipped\n", fb.hdr[s].generation,
+		    (uint64_t)FB_MAX_TRIES);
+	}
+	return -1;
+}
+
+/*
+ * Put slot s's bundle in the payload window and check it. Returns 1 with the container at PAYLOAD_BASE,
+ * 0 when it cannot be had (a read error, contents that do not match their hash).
+ */
+static int
+fb_load_slot(int s)
+{
+	const struct fb_header *h = &fb.hdr[s];
+	uint64_t addr = PAYLOAD_BASE;
+	uint8_t sum[32];
+
 	/* the payload window: reserved in the phone's memory map, ordinary RAM in QEMU -- claim it either way */
 	if (EFI_ERROR(BS->allocate_pages(2 /* AllocateAddress */, 2 /* EfiLoaderData */, PAYLOAD_MAX_SIZE >> 12, &addr))) {
 		print("flash: the payload window is the firmware's (reserved): reading into it as on a USB boot\n");
 	}
-	for (int k = 0; k < FB_SLOTS; k++) {
-		int s = order[k];
-		if (!fb_header_ok(&hdr[s])) {
-			continue;
-		}
-		if (!fb_read(bio, FB_AREA_FIRST + s * FB_SLOT_BLOCKS + 1, (void *)PAYLOAD_BASE, hdr[s].size)) {
-			print("flash: boot slot %d: read error\n", (uint64_t)s);
-			continue;
-		}
-		if (fb_fnv((const uint8_t *)PAYLOAD_BASE, hdr[s].size, 0xcbf29ce484222325ULL) != hdr[s].sum) {
-			print("flash: boot slot %d: contents do not match their sum, trying the other\n", (uint64_t)s);
-			continue;
-		}
-		clean_dcache(PAYLOAD_BASE, PAYLOAD_BASE + hdr[s].size);
-		print("flash: booting slot %d, generation %d\n", (uint64_t)s, hdr[s].generation);
-		return 1;
+	if (!fb_read(fb.bio, FB_AREA_FIRST + s * FB_SLOT_BLOCKS + 1, (void *)PAYLOAD_BASE, h->size)) {
+		print("flash: boot slot %d: read error\n", (uint64_t)s);
+		return 0;
 	}
-	print("flash: no good boot bundle in darwin\n");
-	return 0;
+	sha256((const void *)PAYLOAD_BASE, h->size, sum);
+	if (memcmp(sum, h->sha256, 32) != 0) {
+		print("flash: boot slot %d: contents do not match their SHA-256\n", (uint64_t)s);
+		return 0;
+	}
+	clean_dcache(PAYLOAD_BASE, PAYLOAD_BASE + h->size);
+	print("flash: booting slot %d, generation %d \"%s\" (SHA-256 checked%s)\n", (uint64_t)s, h->generation,
+	    h->label, OWNER_KEY_PINNED ? ", signature checked" : "");
+	return 1;
 }
 
 /* ---- A/B: back to Android ------------------------------------------------ */
@@ -335,8 +525,17 @@ ab_available(void)
 
 /* ---- the menu ------------------------------------------------------------ */
 
-enum { MENU_HACKIOS, MENU_ANDROID, MENU_DEVELOPER, MENU_ITEMS };
-static const char *const menu_names[MENU_ITEMS] = { "HackiOS", "Android", "Developer mode (USB, xl)" };
+enum { MENU_HACKIOS, MENU_PREVIOUS, MENU_ANDROID, MENU_DEVELOPER, MENU_ITEMS };
+static const char *const menu_names[MENU_ITEMS] = { "HackiOS", "HackiOS, previous version", "Android",
+	"Developer mode (USB, xl)" };
+
+static const char *
+menu_detail(int i)
+{
+	if (i == MENU_HACKIOS && fb.newest >= 0) return fb.hdr[fb.newest].label;
+	if (i == MENU_PREVIOUS && fb.older >= 0) return fb.hdr[fb.older].label;
+	return "";
+}
 
 static void
 menu_draw(int sel, int have[MENU_ITEMS], int secs)
@@ -346,7 +545,8 @@ menu_draw(int sel, int have[MENU_ITEMS], int secs)
 		if (!have[i]) {
 			continue;
 		}
-		print("   %s %s\n", i == sel ? ">" : " ", menu_names[i]);
+		print("   %s %s%s%s%s\n", i == sel ? ">" : " ", menu_names[i], *menu_detail(i) ? "  (" : "",
+		    menu_detail(i), *menu_detail(i) ? ")" : "");
 	}
 	if (secs >= 0) {
 		print("  %s in %d s\n", menu_names[sel], (uint64_t)secs);
@@ -355,15 +555,16 @@ menu_draw(int sel, int have[MENU_ITEMS], int secs)
 
 /*
  * The choice: volume up/down move, any other key (power) takes the highlighted entry; with no key for
- * FB_MENU_SECONDS the default (HackiOS when installed) is taken. Returns a MENU_* value.
+ * FB_MENU_SECONDS `dflt` is taken. Returns a MENU_* value; *by_hand says whether a key chose it.
  */
 static int
-fb_menu(int have[MENU_ITEMS])
+fb_menu(int have[MENU_ITEMS], int dflt, int *by_hand)
 {
 	efi_simple_text_in *in = (efi_simple_text_in *)ST->con_in;
-	int sel = have[MENU_HACKIOS] ? MENU_HACKIOS : MENU_DEVELOPER, touched = 0;
+	int sel = dflt, touched = 0;
 	uint64_t ticks = 0;
 
+	*by_hand = 0;
 	menu_draw(sel, have, FB_MENU_SECONDS);
 	flush_log();
 	for (;;) {
@@ -376,6 +577,7 @@ fb_menu(int have[MENU_ITEMS])
 				} while (!have[sel]);
 				menu_draw(sel, have, -1);
 			} else {
+				*by_hand = 1;
 				return sel;
 			}
 		}
@@ -390,23 +592,46 @@ fb_menu(int have[MENU_ITEMS])
 	}
 }
 
+/* run slot s; returns only when it could not be loaded */
+static void
+fb_boot(int s)
+{
+	if (fb_load_slot(s)) {
+		fb_count_start(s);
+		flush_log();
+		run_kernel(0, 0);                       /* until the phone is switched off; if it comes back, reset */
+		reboot();
+	}
+	fb.ok[s] = 0;
+}
+
 /* The boot of an installed device: the menu, then what was chosen. Does not return. */
 static void
 fb_standalone(void)
 {
-	int have[MENU_ITEMS] = { 1, 0, 1 };
+	int have[MENU_ITEMS] = { 0, 0, 0, 1 };
 
-	have[MENU_HACKIOS] = fb_find_darwin() != NULL;
+	fb_scan();
 	have[MENU_ANDROID] = ab_available();
 	for (;;) {
-		int choice = fb_menu(have);
-		print("menu: %s\n", menu_names[choice]);
-		if (choice == MENU_HACKIOS) {
-			if (fb_load_bundle()) {
-				run_kernel(0, 0);               /* until the phone is switched off; if it comes back, reset */
-				reboot();
-			}
-			have[MENU_HACKIOS] = 0;                 /* nothing bootable there: offer the rest */
+		int auto_slot = fb.bio ? fb_auto_slot() : -1, by_hand, choice, dflt;
+
+		have[MENU_HACKIOS] = fb.newest >= 0 && fb.ok[fb.newest];
+		have[MENU_PREVIOUS] = fb.older >= 0 && fb.ok[fb.older];
+		if (auto_slot >= 0) {
+			dflt = auto_slot == fb.newest ? MENU_HACKIOS : MENU_PREVIOUS;
+		} else if (have[MENU_HACKIOS] && have[MENU_ANDROID]) {
+			/* installed, and nothing installed comes up: the countdown goes back to Android */
+			print("flash: no installed HackiOS has come up in %d tries: Android is the default\n",
+			    (uint64_t)FB_MAX_TRIES);
+			dflt = MENU_ANDROID;
+		} else {
+			dflt = have[MENU_HACKIOS] ? MENU_HACKIOS : have[MENU_ANDROID] ? MENU_ANDROID : MENU_DEVELOPER;
+		}
+		choice = fb_menu(have, dflt, &by_hand);
+		print("menu: %s%s\n", menu_names[choice], by_hand ? "" : " (countdown)");
+		if (choice == MENU_HACKIOS || choice == MENU_PREVIOUS) {
+			fb_boot(choice == MENU_HACKIOS ? fb.newest : fb.older);
 		} else if (choice == MENU_ANDROID) {
 			if (ab_switch_back()) {
 				reboot();
@@ -418,6 +643,11 @@ fb_standalone(void)
 				usb_command_loop();
 			}
 			print("menu: no USB link here\n");
+			have[MENU_DEVELOPER] = 0;
+			if (!have[MENU_HACKIOS] && !have[MENU_PREVIOUS] && !have[MENU_ANDROID]) {
+				print("menu: nothing left to start: resetting\n");
+				reboot();
+			}
 		}
 	}
 }

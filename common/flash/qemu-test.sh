@@ -1,48 +1,162 @@
 #!/bin/bash
 # Test the installed-device boot in QEMU, with no phone: a disk laid out like one (boot_a, boot_b with
-# Qualcomm A/B attributes, Android active on _b, a darwin partition with a boot bundle in its boot area),
-# the loader started with no payload, as the UEFI in boot_a would start it.
+# Qualcomm A/B attributes, Android's slot _b, a darwin partition with boot bundles and the boot state in its
+# boot area), the loader started with no payload, as the UEFI in boot_a would start it.
 #
-# usage: common/flash/qemu-test.sh [auto|android|developer]
-#   auto       no key: the menu's default after its countdown -- the bundle from darwin boots
-#   android    down + enter: the loader makes slot _b active again (the GPT is checked afterwards)
+# usage: common/flash/qemu-test.sh [SCENARIO...]       (none: all of them; CI runs all)
 #
-# The bundle runs the prebuilt kernel with userland's `hello` as its root (a 20 s session), so the test
-# needs no files of iOS.
-set -e
+#   boot        the countdown: the newest bundle boots, the kernel runs, the start is counted
+#   previous    down + power: "HackiOS, previous version" boots the older bundle
+#   guard       the newest was started 3 times and never came up: the countdown skips it, the older boots,
+#               and the newest is remembered as given up on
+#   fallback    no installed generation comes up: the countdown goes to Android (the A/B bytes exchanged)
+#   android     down, down + power: back to Android by hand; the GPT is checked afterwards
+#   tampered    the newest bundle's contents changed after it was made: its SHA-256 refuses it
+#   signed      a loader with an owner key pinned: the unsigned newest is refused, the signed older boots
+#   forged      a pinned loader, a bundle signed by another key: refused, nothing boots, the menu stays
+#
+# Each bundle runs the prebuilt kernel with userland's `hello` as its root, so the test needs no files of iOS.
+set -u
 cd "$(dirname "$(readlink -f "$0")")/../.."
-MODE=${1:-auto}
 W=out/qemu-flash; mkdir -p $W/esp/EFI/BOOT
 EFI=${QEMU_EFI:-/usr/share/AAVMF/AAVMF_CODE.fd}; [ -f "$EFI" ] || EFI=/usr/share/edk2/aarch64/QEMU_EFI.fd
 VARS=${QEMU_VARS:-/usr/share/AAVMF/AAVMF_VARS.fd}; [ -f "$VARS" ] || VARS=/usr/share/edk2/aarch64/QEMU_VARS.fd
-L=xnuloader/loader.efi; [ -f $L ] || L=prebuilt/loader.efi
 K=xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837; [ -f $K ] || K=prebuilt/mach.development.bcm2837
 HELLO=${HELLO:-userland/hello}; [ -f $HELLO ] || HELLO=prebuilt/userland/hello
-cp $L $W/esp/EFI/BOOT/BOOTAA64.EFI; cp "$VARS" $W/vars.fd
+[ -f $HELLO ] || HELLO=../hackios-xnu-userland/prebuilt/userland/hello
+PASS=0; FAIL=0; FAILED=""
 
-# the "phone": a sparse 9 GiB disk
-rm -f $W/disk.img; truncate -s 9G $W/disk.img
-sgdisk -o -n 1:2048:+64M -c 1:boot_a -n 2:0:+64M -c 2:boot_b -n 3:0:0 -c 3:darwin $W/disk.img > /dev/null
-# Qualcomm A/B byte (attribute bits 48..55) as `bootctl set-active-boot-slot 0` leaves it before HackiOS boots:
-# _a active (bit 50), priority 3 (48, 49), retries left (52, 53); _b, Android's slot, inactive but successful (54)
-for bit in 48 49 50 52 53; do sgdisk -A 1:set:$bit $W/disk.img > /dev/null; done
-sgdisk -A 2:set:54 $W/disk.img > /dev/null
-python3 common/flash/mkbundle.py -o $W/bundle.img --kernel $K --ramdisk $HELLO --cmdline "-v loader_return_after=15" --generation 1
-DARWIN_START=$(sgdisk -i 3 $W/disk.img | awk '/First sector/ {print $3}')
-dd if=$W/bundle.img of=$W/disk.img bs=512 seek=$((DARWIN_START + 2042368 * 8)) conv=notrunc status=none
-echo "qemu-test: before: $(sgdisk -A 1:show $W/disk.img | tr '\n' ' ') / $(sgdisk -A 2:show $W/disk.img | tr '\n' ' ')"
+bundle() {      # bundle OUT GENERATION [mkbundle args]
+	local out=$1 gen=$2; shift 2
+	python3 common/flash/mkbundle.py -o $out --kernel $K --ramdisk $HELLO --cmdline "-v loader_return_after=15" \
+		--generation $gen --label "test gen $gen" "$@" > /dev/null
+}
 
-case $MODE in
-auto) KEYS="" ;;
-android) KEYS=$'\e[B\r' ;;
-developer) KEYS=$'\e[B\e[B\r' ;;
-esac
-rm -f $W/log.txt; touch $W/log.txt
-# the keys go in once the menu is on the screen (the firmware takes a while to get there under TCG)
-( until grep -qa "HACKiOS boot menu" $W/log.txt; do sleep .5; done; sleep 1; printf '%s' "$KEYS"; sleep 400 ) | timeout ${QEMU_TIMEOUT:-300} qemu-system-aarch64 -M virt,gic-version=3 -cpu cortex-a76 -smp 1 -m 6G \
-	-drive if=pflash,format=raw,readonly=on,file="$EFI" -drive if=pflash,format=raw,file=$W/vars.fd \
-	-drive file=fat:rw:$W/esp,format=raw,if=virtio -drive file=$W/disk.img,format=raw,if=virtio \
-	-display none -serial stdio -monitor none -no-reboot 2>&1 | stdbuf -o0 tr -d '\r' > $W/log.txt || true
-grep -aE "menu|flash:|ab:|hello|loader_return_after expired|Darwin Kernel" $W/log.txt | head -40
-echo "qemu-test: after: $(sgdisk -A 1:show $W/disk.img | tr '\n' ' ') / $(sgdisk -A 2:show $W/disk.img | tr '\n' ' ')"
-sgdisk -v $W/disk.img | grep -iE "problem|no problems" | head -3
+disk() {        # a fresh "phone": slot _a (ours) active, _b (Android's) inactive but successful
+	rm -f $W/disk.img; truncate -s 9G $W/disk.img
+	sgdisk -o -n 1:2048:+64M -c 1:boot_a -n 2:0:+64M -c 2:boot_b -n 3:0:0 -c 3:darwin $W/disk.img > /dev/null
+	for bit in 48 49 50 52 53; do sgdisk -A 1:set:$bit $W/disk.img > /dev/null; done
+	sgdisk -A 2:set:54 $W/disk.img > /dev/null
+	DARWIN_START=$(sgdisk -i 3 $W/disk.img | awk '/First sector/ {print $3}')
+}
+
+put() {         # put FILE BLOCK: into darwin at 4 KiB block BLOCK
+	dd if=$1 of=$W/disk.img bs=512 seek=$((DARWIN_START + $2 * 8)) conv=notrunc status=none
+}
+
+slot() { put $1 $((2042368 + $2 * 24576)); }
+
+state() {       # state trying tries good bad: write a boot state
+	python3 -c "import sys; sys.path.insert(0, 'common/flash'); import bundlefmt as f
+open('$W/state.img', 'wb').write(f.make_state(trying=$1, tries=$2, good=$3, bad=$4))"
+	put $W/state.img 2091520
+}
+
+read_state() {
+	dd if=$W/disk.img bs=512 skip=$((DARWIN_START + 2091520 * 8)) count=8 status=none | python3 -c "
+import sys; sys.path.insert(0, 'common/flash'); import bundlefmt as f
+s = f.parse_state(sys.stdin.buffer.read()); print('none' if s is None else 'trying=%(trying)d tries=%(tries)d good=%(good)d bad=%(bad)d boots=%(boots)d' % s)"
+}
+
+ab() { echo "$(sgdisk -A 1:show $W/disk.img | tr -d '\n') / $(sgdisk -A 2:show $W/disk.img | tr -d '\n')"; }
+
+# run LOADER KEYS UNTIL: boot QEMU, send KEYS once the menu is up, stop when UNTIL appears in the log
+run() {
+	local loader=$1 keys=$2 until=$3
+	cp $loader $W/esp/EFI/BOOT/BOOTAA64.EFI; cp "$VARS" $W/vars.fd
+	rm -f $W/log.txt $W/done; touch $W/log.txt
+	# the keys go in once the menu is on the screen; the feeder then holds QEMU's input open until the end
+	( until grep -qa "HACKiOS boot menu" $W/log.txt || [ -f $W/done ]; do sleep .5; done; sleep 1; printf '%s' "$keys"
+	  until [ -f $W/done ]; do sleep .5; done ) 2> /dev/null |
+		timeout ${QEMU_TIMEOUT:-300} qemu-system-aarch64 -M virt,gic-version=3 -cpu cortex-a76 -smp 1 -m 6G \
+		-drive if=pflash,format=raw,readonly=on,file="$EFI" -drive if=pflash,format=raw,file=$W/vars.fd \
+		-drive file=fat:rw:$W/esp,format=raw,if=virtio -drive file=$W/disk.img,format=raw,if=virtio \
+		-display none -serial stdio -monitor none -no-reboot 2>&1 | stdbuf -o0 tr -d '\r' > $W/log.txt &
+	local qp=$!
+	for _ in $(seq 1 $(( ${QEMU_TIMEOUT:-300} * 2 ))); do
+		grep -qaE "$until" $W/log.txt && sleep 2 && break
+		kill -0 $qp 2>/dev/null || break
+		sleep .5
+	done
+	touch $W/done
+	pkill -f "file=$W/disk.img,format=raw" 2>/dev/null; wait $qp 2>/dev/null
+}
+
+expect() {      # expect NAME PATTERN...: every pattern in the log (a leading ! : must not be there)
+	local name=$1 ok=1; shift
+	for p in "$@"; do
+		if [ "${p:0:1}" = "!" ]; then grep -qaE "${p:1}" $W/log.txt && { echo "   unexpected: ${p:1}"; ok=0; }
+		else grep -qaE "$p" $W/log.txt || { echo "   missing: $p"; ok=0; }; fi
+	done
+	if [ $ok = 1 ]; then PASS=$((PASS + 1)); echo "PASS $name"
+	else FAIL=$((FAIL + 1)); FAILED="$FAILED $name"; echo "FAIL $name"; grep -aE "flash:|menu:|ab:" $W/log.txt | head -30 | sed 's/^/   | /'; fi
+}
+
+L=xnuloader/loader.efi; [ -f $L ] || L=prebuilt/loader.efi
+bundle $W/gen1.img 1; bundle $W/gen2.img 2
+DOWN=$'\e[B'; ENTER=$'\r'
+
+scenario() {
+	echo "== $1"
+	case $1 in
+	boot)
+		disk; slot $W/gen1.img 0; slot $W/gen2.img 1
+		run $L "" "Darwin Kernel|loader_return_after expired"
+		expect boot "booting slot 1, generation 2" "SHA-256 checked" "start 1 of generation 2 counted" "Darwin Kernel"
+		[ "$(read_state)" = "trying=2 tries=1 good=0 bad=0 boots=1" ] || { echo "   state: $(read_state)"; FAIL=$((FAIL+1)); FAILED="$FAILED boot-state"; } ;;
+	previous)
+		disk; slot $W/gen1.img 0; slot $W/gen2.img 1
+		run $L "$DOWN$ENTER" "flash: booting slot"
+		expect previous "HackiOS, previous version" "booting slot 0, generation 1" ;;
+	guard)
+		disk; slot $W/gen1.img 0; slot $W/gen2.img 1; state 2 3 1 0
+		run $L "" "flash: booting slot"
+		expect guard "generation 2 did not come up 3 times: skipped" "booting slot 0, generation 1" "!booting slot 1"
+		run_state=$(read_state); echo "   state after: $run_state"
+		[ "$run_state" = "trying=1 tries=1 good=1 bad=2 boots=1" ] || { FAIL=$((FAIL+1)); FAILED="$FAILED guard-state"; } ;;
+	fallback)
+		disk; slot $W/gen1.img 0; slot $W/gen2.img 1; state 1 3 0 2
+		run $L "" "ab: slots exchanged|ab: not exactly|ab: no unit"
+		expect fallback "Android is the default" "menu: Android \(countdown\)" "ab: slots exchanged" "!booting slot"
+		sgdisk -v $W/disk.img | grep -q "No problems found" || { echo "   GPT not sound"; FAIL=$((FAIL+1)); FAILED="$FAILED fallback-gpt"; } ;;
+	android)
+		disk; slot $W/gen1.img 0; slot $W/gen2.img 1
+		run $L "$DOWN$DOWN$ENTER" "ab: slots exchanged|ab: not exactly|ab: no unit"
+		echo "   A/B after: $(ab)"
+		expect android "menu: Android$" "ab: slots exchanged"
+		sgdisk -A 2:show $W/disk.img | grep -q "^2:50:1" || { echo "   boot_b is not active"; FAIL=$((FAIL+1)); FAILED="$FAILED android-ab"; }
+		sgdisk -v $W/disk.img | grep -q "No problems found" || { echo "   GPT not sound"; FAIL=$((FAIL+1)); FAILED="$FAILED android-gpt"; } ;;
+	tampered)
+		disk; cp $W/gen2.img $W/bad.img
+		printf 'X' | dd of=$W/bad.img bs=1 seek=$((4096 + 5000)) conv=notrunc status=none
+		slot $W/gen1.img 0; slot $W/bad.img 1
+		run $L "" "flash: booting slot 0|Darwin Kernel"
+		expect tampered "boot slot 1: contents do not match their SHA-256" "booting slot 0, generation 1" ;;
+	signed|forged)
+		export OWNER_KEY_H=$PWD/$W/owner_key.h
+		rm -f $W/owner.key $W/other.key
+		python3 common/flash/ownerkey.py init $W/owner.key > /dev/null
+		rm -f $W/loader-pinned.efi
+		OUT=../$W/loader-pinned.efi xnuloader/build.sh > /dev/null || { echo "   the pinned loader did not build"; FAIL=$((FAIL+1)); return; }
+		unset OWNER_KEY_H
+		if [ $1 = signed ]; then
+			bundle $W/gen1s.img 1 --sign $W/owner.key
+			disk; slot $W/gen1s.img 0; slot $W/gen2.img 1
+			run $W/loader-pinned.efi "" "flash: booting slot|Darwin Kernel"
+			expect signed "owner key pinned" "boot slot 1: not signed" "booting slot 0, generation 1 .*signature checked"
+		else
+			OWNER_KEY_H=$W/other.h python3 common/flash/ownerkey.py init $W/other.key > /dev/null
+			bundle $W/gen3x.img 3 --sign $W/other.key
+			disk; slot $W/gen3x.img 0
+			run $W/loader-pinned.efi "" "menu: no USB link|resetting|Developer mode \(USB, xl\) in 1 s"
+			expect forged "boot slot 0: the signature is not by key .*REFUSED" "!flash: booting slot"
+		fi ;;
+	*) echo "unknown scenario $1"; exit 2 ;;
+	esac
+}
+
+ALL="boot previous guard fallback android tampered signed forged"
+[ $# -gt 0 ] || set -- $ALL
+for s in "$@"; do scenario "$s"; done
+echo "qemu-test: $PASS passed, $FAIL failed${FAILED:+:$FAILED}"
+[ $FAIL = 0 ]

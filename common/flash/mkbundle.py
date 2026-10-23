@@ -1,33 +1,23 @@
 #!/usr/bin/env python3
 """
 Make a boot bundle for an installed device: the "XNUP" container the loader runs (kernel, boot volume,
-command line -- the same one `xl run` sends) behind a header that the loader checks before it boots it.
+command line -- the same one `xl run` sends) behind a header that the loader checks before it boots it:
+the container's SHA-256 and, with --sign, an Ed25519 signature by the owner key (common/flash/ownerkey.py).
 
-The bundle goes into one of the two boot slots of darwin (xnuloader/flashboot.c): slot N starts at 4 KiB
-block 2042368 + N * 24576 of the partition; the header is the first block, the container follows.
+The bundle goes into one of the two boot slots of darwin (formats: common/flash/bundlefmt.py).
 
-usage: mkbundle.py -o bundle.img --kernel K --ramdisk R [--cmdline "..."] [--generation N]
+usage: mkbundle.py -o bundle.img --kernel K --ramdisk R [--cmdline "..."] [--generation N] [--label TEXT]
+                   [--sign [KEYFILE]]
 """
-import argparse, os, struct, subprocess, sys, tempfile
+import argparse, os, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, '..', '..'))
-BLOCK = 4096
-AREA_FIRST, SLOT_BLOCKS = 2042368, 24576
+sys.path.insert(0, HERE)
+import bundlefmt as fmt
+import ownerkey
+
 PAYLOAD_LIMIT = 0x04000000 - 0x100000
-
-def fnv(data, h=0xcbf29ce484222325):
-    for b in data:
-        h ^= b
-        h = (h * 0x100000001b3) & 0xffffffffffffffff
-    return h
-
-def fnv_fast(data):
-    """the same FNV-1a 64, a megabyte at a time"""
-    h, mv = 0xcbf29ce484222325, memoryview(data)
-    for i in range(0, len(mv), 1 << 20):
-        h = fnv(bytes(mv[i:i + (1 << 20)]), h)
-    return h
 
 ap = argparse.ArgumentParser()
 ap.add_argument('-o', '--output', required=True)
@@ -35,6 +25,9 @@ ap.add_argument('--kernel', required=True)
 ap.add_argument('--ramdisk', required=True)
 ap.add_argument('--cmdline', default='')
 ap.add_argument('--generation', type=int, default=None, help='default: seconds since 1970 (newer wins)')
+ap.add_argument('--label', default=None, help='shown in the boot menu (default: the date)')
+ap.add_argument('--sign', nargs='?', const=ownerkey.DEFAULT, default=None, metavar='KEYFILE',
+                help='sign with the owner key (default %s)' % ownerkey.DEFAULT)
 args = ap.parse_args()
 
 with tempfile.TemporaryDirectory() as td:
@@ -43,12 +36,13 @@ with tempfile.TemporaryDirectory() as td:
                            f'kernel={args.kernel}', f'ramdisk={args.ramdisk}', '--cmdline', args.cmdline],
                           stdout=subprocess.DEVNULL)
     data = open(cont, 'rb').read()
-if len(data) > PAYLOAD_LIMIT or len(data) > (SLOT_BLOCKS - 1) * BLOCK:
+if len(data) > PAYLOAD_LIMIT or len(data) > (fmt.SLOT_BLOCKS - 1) * fmt.BLOCK:
     sys.exit(f'mkbundle: the container is {len(data)} bytes, more than a slot or the payload window takes')
-gen = args.generation if args.generation is not None else int(__import__('time').time())
-head = b'HKBOOT01' + struct.pack('<QQQ', gen, len(data), fnv_fast(data))
-head += struct.pack('<Q', fnv(head))
-out = head + b'\0' * (BLOCK - len(head)) + data
-out += b'\0' * (-len(out) % BLOCK)
+gen = args.generation if args.generation is not None else int(time.time())
+label = args.label if args.label is not None else time.strftime('%Y-%m-%d %H:%M')
+sign = ownerkey.signer(args.sign) if args.sign else None
+out = fmt.make_header(gen, data, label, sign) + data
+out += b'\0' * (-len(out) % fmt.BLOCK)
 open(args.output, 'wb').write(out)
-print(f'mkbundle: {args.output}: generation {gen}, container {len(data)} bytes, {len(out) // BLOCK} blocks')
+print(f'mkbundle: {args.output}: generation {gen} "{label}", container {len(data)} bytes, '
+      f'{len(out) // fmt.BLOCK} blocks, {"signed" if sign else "unsigned"}')

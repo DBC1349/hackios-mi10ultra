@@ -15,7 +15,7 @@ CODE=$1; DTB=$2
 CONF=common/devices/$CODE.conf PLATC=common/devices/$CODE.platform.c
 [ -e "$CONF" ] && die "$CONF exists already"
 
-sed -e "s/^NAME=.*/NAME=\"TODO vendor model ($CODE)\"/" -e "s/^UEFI_TARGET=.*/UEFI_TARGET=$CODE/" \
+sed -e "s/^CODENAMES=\"codename\"/CODENAMES=\"$CODE\"/" -e "s/^NAME=.*/NAME=\"TODO vendor model ($CODE)\"/" -e "s/^UEFI_TARGET=.*/UEFI_TARGET=$CODE/" \
 	common/devices/_template.conf > "$CONF"
 [ -n "$DTB" ] && sed -i "s|^DTB=.*|DTB=$(readlink -f "$DTB")|" "$CONF"
 

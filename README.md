@@ -120,12 +120,26 @@ XL_SECS=900 XL_CMDLINE="touchscreen=1 cpufreq=1 bootcpu=7 cpus=8 gpu=1 wifi=1 ad
 ## Install as a dual boot (no computer needed afterwards)
 
 HackiOS can live on the phone next to Android: the UEFI with our loader in the spare A/B slot, the kernel and the
-boot volume in darwin, a boot menu at power-on (HackiOS / Android / developer mode), sessions with no time limit.
-Android is never written, and fastboot always brings it back. See [docs/INSTALL.md](docs/INSTALL.md):
+boot volume in darwin, a boot menu at power-on, sessions with no time limit. Android is never written, and fastboot
+always brings it back. See [docs/INSTALL.md](docs/INSTALL.md).
+
+| | |
+|---|---|
+| **Boots from the flash** | no `fastboot boot`, no computer, no RAM-only session: power on, menu, HackiOS |
+| **Two versions installed** | updates go into the other slot; "HackiOS, previous version" is always in the menu |
+| **Boot guard** | a version that does not come up 3 times is skipped by itself -- the previous one boots, then Android |
+| **Verified boot, your key** | SHA-256 of every bundle; with an owner key pinned, Ed25519-signed bundles only |
+| **A/B switch in the loader** | back to Android from the menu: backup GPT first, CRCs, both tables read back |
+| **Device identity checks** | nothing is written to a phone that is not the profile's `CODENAMES` |
+| **Tested on every push** | eight QEMU scenarios of the boot menu and the guard, crypto checked against Python |
 
 ```sh
-common/flash/install.sh redwood
-python3 common/flash/flashctl.py switch hackios
+common/hackios detect                # which profile is the phone on adb? (writes nothing)
+common/hackios doctor redwood        # every precondition, checked (writes nothing)
+common/hackios install redwood
+common/hackios switch redwood hackios
+common/hackios health redwood        # the boot guard's view
+common/hackios test                  # the whole dual boot in QEMU, no phone
 ```
 
 ## Prebuilt boot image

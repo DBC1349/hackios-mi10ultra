@@ -22,9 +22,15 @@ if [ -z "$SKIP_BUILD" ]; then
 	env $FLASH_USERLAND_VARS userland/build.sh
 fi
 [ -f userland/flashboot.apfs ] || die "no userland/flashboot.apfs (FLASHBOOT=1 userland/build.sh makes it)"
-python3 common/flash/mkbundle.py -o out/$DEVICE-bundle.img --kernel $K --ramdisk userland/flashboot.apfs --cmdline "$FLASH_BOOTARGS"
+# signed with the owner key when there is one (common/flash/ownerkey.py); OWNER_KEY=file names another
+SIGN=; KEYFILE=${OWNER_KEY:-$HOME/.hackios/owner.key}; [ -f "$KEYFILE" ] && SIGN="--sign $KEYFILE"
+LABEL="$(git describe --tags --always 2>/dev/null || echo build) $(date +%Y-%m-%d)"
+python3 common/flash/mkbundle.py -o out/$DEVICE-bundle.img --kernel $K --ramdisk userland/flashboot.apfs \
+	--cmdline "$FLASH_BOOTARGS" --label "$LABEL" $SIGN
 
 F=common/flash/flashctl.py
+export HACKIOS_CODENAMES="${CODENAMES:-$DEVICE}"
+python3 $F doctor || die "the phone is not ready (see above)"
 python3 $F status || die "the phone is not ready (see above)"
 if [ "$MODE" = install ]; then
 	# the UEFI with the loader and no payload: the loader shows the boot menu and boots from darwin
@@ -43,4 +49,8 @@ Installed. Android is untouched and still the active slot.
   back to Android:      choose "Android" in the HackiOS boot menu (volume keys, power)
                         or, from fastboot: python3 $F switch android
   remove the UEFI:      python3 $F restore
+  is it healthy:        python3 $F health          (the boot guard: a version that does not come up 3 times
+                                                    is skipped by itself; then the previous one, then Android)
+  previous version:     python3 $F rollback        (or "HackiOS, previous version" in the menu)
+(each flashctl.py command needs HACKIOS_CODENAMES=$HACKIOS_CODENAMES, or use common/hackios)
 MSG
