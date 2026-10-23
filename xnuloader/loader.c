@@ -3906,7 +3906,10 @@ ramfb_phone_screen(void)
 	dma.control = be32(select << 16 | FW_CFG_DMA_SELECT | FW_CFG_DMA_WRITE);
 	dma.length = be32(sizeof(cfg));
 	dma.address = __builtin_bswap64((uint64_t)(uintptr_t)&cfg);
-	*(volatile uint64_t *)(FW_CFG_BASE + 16) = __builtin_bswap64((uint64_t)(uintptr_t)&dma);
+	/* the DMA address register takes two big-endian 32-bit writes, high word first; QEMU starts the
+	 * transfer on the second one */
+	*(volatile uint32_t *)(FW_CFG_BASE + 16) = be32((uint32_t)((uint64_t)(uintptr_t)&dma >> 32));
+	*(volatile uint32_t *)(FW_CFG_BASE + 20) = be32((uint32_t)(uintptr_t)&dma);
 	if (dma.control != 0) {
 		print("ramfb: control %x after the request\n", (uint64_t)be32(dma.control));
 		return;
