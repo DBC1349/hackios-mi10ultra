@@ -4,6 +4,8 @@ set -e
 cd "$(dirname "$0")"
 # the owner key the loader checks boot bundles against (common/flash/ownerkey.py); none pinned by default
 [ -f owner_key.h ] || OWNER_KEY_H= python3 ../common/flash/ownerkey.py unpin > /dev/null
+# where this phone's darwin is (DARWIN_ID=phones/<serial>.darwin; none: the defaults), made anew every build
+python3 ../common/flash/darwinid.py header "${DARWIN_ID:+$(readlink -f "$DARWIN_ID")}" darwin_identity.h
 # OWNER_KEY_H=file: build with that key header instead (tests); OUT=name: the .efi to write
 OUT=${OUT:-loader.efi}
 KEYDEF=; [ -n "$OWNER_KEY_H" ] && KEYDEF="-DOWNER_KEY_FILE=\"$(readlink -f "$OWNER_KEY_H")\""

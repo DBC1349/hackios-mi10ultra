@@ -76,8 +76,19 @@ extern void FlushPoC_DcacheRegion(vm_offset_t va, size_t length);   /* osfmk/arm
  * bounds and the GUIDs of the partition besides (xnuloader/loader.c, BLOCK_WRITE_FIRST).
  */
 #define UFS_WRITE_FIRST    2042368ULL                  /* darwin's blocks of 4096 */
-#define UFS_DARWIN_FIRST   25374720ULL                 /* its first LBA on the unit, as the GPT has it */
-#define UFS_DARWIN_BLOCKS  5242875ULL
+/*
+ * Where darwin is: the phone's own, since every phone gets its darwin cut from the end of its own userdata
+ * (tools/userdata-carve.py) and a 128 GB and a 256 GB phone end in very different places. The loader's
+ * command line says so (darwin_lba= and darwin_blocks=, which common/flash/install.sh takes from the
+ * phone's identity file, phones/<serial>.darwin); without them, the phone the port was brought up on.
+ * The loader checks the same place and the partition's GUIDs from its own copy of that file besides.
+ */
+#define UFS_DARWIN_FIRST_DEFAULT   25374720ULL         /* its first LBA on the unit, as the GPT has it */
+#define UFS_DARWIN_BLOCKS_DEFAULT  5242875ULL
+#define UFS_DARWIN_BLOCKS_LEAST    3145728ULL          /* the var store's two slots end here (userland/src/var_store.c) */
+static uint64_t ufs_darwin_first = UFS_DARWIN_FIRST_DEFAULT, ufs_darwin_blocks = UFS_DARWIN_BLOCKS_DEFAULT;
+#define UFS_DARWIN_FIRST   ufs_darwin_first
+#define UFS_DARWIN_BLOCKS  ufs_darwin_blocks
 
 struct loader_block_part {
 	char name[36];
@@ -1499,6 +1510,18 @@ redwood_ufs_init(void)
 	check = 0;
 	if (PE_parse_boot_argn("ufs_write", &check, sizeof(check)) && check == 1) {
 		uint32_t offered = ufs_page->write_part_plus_one;
+		uint64_t lba = 0, blocks = 0;
+
+		/* this phone's darwin, when the command line names it (above, UFS_DARWIN_FIRST) */
+		if (PE_parse_boot_argn("darwin_lba", &lba, sizeof(lba)) && PE_parse_boot_argn("darwin_blocks", &blocks, sizeof(blocks))) {
+			if (blocks >= UFS_DARWIN_BLOCKS_LEAST) {
+				ufs_darwin_first = lba;
+				ufs_darwin_blocks = blocks;
+			} else {
+				printf("ufs: darwin_blocks=%llu is less than the %llu the layout needs: ignored\n", blocks,
+				    UFS_DARWIN_BLOCKS_LEAST);
+			}
+		}
 
 		if (offered == 0 || offered > ufs_parts || ufs_page->write_first != UFS_WRITE_FIRST) {
 			printf("ufs: the loader offers no partition to write into (ufs_write=1 on its command "

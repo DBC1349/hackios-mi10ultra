@@ -1489,10 +1489,13 @@ ufs_survey(void)
  * same partition, named the same, of the same size, in the same place, on logical unit 0.
  */
 #define BLOCK_WRITE_FIRST  2042368ULL                  /* darwin's blocks of 4096: past both cryptexes */
-#define BLOCK_DARWIN_FIRST 25374720ULL                 /* its first and last LBA of unit 0, as the GPT has them */
-#define BLOCK_DARWIN_LAST  30617594ULL
+/*
+ * Its first and last LBA of unit 0 as the GPT has them, and its unique GUID: this phone's, from its identity
+ * file (phones/<serial>.darwin, made when its darwin was cut: common/flash/darwinid.py), which xnuloader/build.sh
+ * turns into darwin_identity.h (DARWIN_ID=file); without one, the phone the port was brought up on.
+ */
+#include "darwin_identity.h"
 #define BLOCK_DARWIN_TYPE  { 0x7c3457ef, 0x0000, 0x11aa, { 0xaa, 0x11, 0x00, 0x30, 0x65, 0x43, 0xec, 0xac } }
-#define BLOCK_DARWIN_UNIQ  { 0xfd6854ad, 0x24aa, 0x4fc3, { 0x94, 0xfe, 0x29, 0x01, 0x16, 0x85, 0x8d, 0x68 } }
 
 /*
  * The partitions first, then the logical units they are on (BLOCK_PART_UNIT, named unit0, unit1,
@@ -3961,12 +3964,15 @@ efi_main(efi_handle image, efi_system_table *st)
 		usb_command_loop();
 	}
 
-	/* One-shot mode: run the kernel that came with the image, then reset. */
-	if (have_payload) {
+	/*
+	 * One-shot mode: run the kernel that came with the image, then reset. A payload with the loader alone
+	 * (an installed device's boot partition: common/flash/install.sh) has no kernel: that is the menu's.
+	 */
+	if (have_payload && pi.kernel != NULL) {
 		run_kernel(0, 0);
 		reboot();
 	}
-	/* No payload: an installed device booting on its own -- the menu, the bundle from darwin, Android */
+	/* No kernel: an installed device booting on its own -- the menu, the bundle from darwin, Android */
 	fb_standalone();
 	reboot();
 	return 0;

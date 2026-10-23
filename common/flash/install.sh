@@ -16,6 +16,13 @@ MODE=${2:-install}
 mkdir -p out
 
 K=xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837; [ -f $K ] || K=prebuilt/mach.development.bcm2837
+# this phone's darwin (made when it was cut: tools/userdata-carve.py, common/flash/darwinid.py): the loader is
+# built with it, and the kernel is told it on its command line
+SERIAL=$(adb get-serialno 2>/dev/null | tr -d '\r')
+export DARWIN_ID=phones/$SERIAL.darwin
+[ -f "$DARWIN_ID" ] || die "no $DARWIN_ID: this phone's darwin has not been cut yet (tools/userdata-carve.py, then darwinid.py from-gpt)"
+FLASH_BOOTARGS="$FLASH_BOOTARGS $(python3 common/flash/darwinid.py bootargs $DARWIN_ID)"
+xnuloader/build.sh > /dev/null || die "the loader did not build"
 if [ -z "$SKIP_BUILD" ]; then
 	have_userland
 	[ -d ios165/rootfs ] || die "no iOS files: ios165/fetch.sh first"
@@ -33,9 +40,12 @@ export HACKIOS_CODENAMES="${CODENAMES:-$DEVICE}"
 python3 $F doctor || die "the phone is not ready (see above)"
 python3 $F status || die "the phone is not ready (see above)"
 if [ "$MODE" = install ]; then
-	# the UEFI with the loader and no payload: the loader shows the boot menu and boots from darwin
+	# the UEFI with a payload of the loader alone (no kernel): the UEFI's hook starts the loader from the
+	# payload, and the loader, finding no kernel there, shows the boot menu and boots from darwin
+	python3 xnuloader/mkpayload.py -o out/$DEVICE-uefi-payload.bin loader.efi=xnuloader/loader.efi > /dev/null ||
+		die "the loader's payload was not made"
 	FD_BASE=$FD_BASE FD_SIZE=$FD_SIZE PAYLOAD_BASE=$PAYLOAD_BASE UEFI_FD=$UEFI_FD DTB=$DTB UEFI_TARGET=$UEFI_TARGET \
-		python3 mkxnuimg.py -o out/$DEVICE-uefi.img
+		python3 mkxnuimg.py -p out/$DEVICE-uefi-payload.bin -o out/$DEVICE-uefi.img
 	python3 $F backup || die "backup failed: nothing was written"
 	python3 $F write-bundle out/$DEVICE-bundle.img || die "the bundle was not written"
 	python3 $F write-uefi out/$DEVICE-uefi.img || die "the UEFI was not written"

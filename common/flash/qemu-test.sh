@@ -13,6 +13,8 @@
 #   android     down, down + power: back to Android by hand; the GPT is checked afterwards, and the choice is
 #               remembered in the boot state
 #   remembered  the last choice was Android: the countdown takes Android again, like a PC's boot menu
+#   not-ours    started with Android's slot active (as `fastboot boot` of the image would): Android is chosen,
+#               and nothing is written -- the slots are not exchanged into the wrong state
 #   tampered    the newest bundle's contents changed after it was made: its SHA-256 refuses it
 #   signed      a loader with an owner key pinned: the unsigned newest is refused, the signed older boots
 #   forged      a pinned loader, a bundle signed by another key: refused, nothing boots, the menu stays
@@ -40,6 +42,14 @@ disk() {        # a fresh "phone": slot _a (ours) active, _b (Android's) inactiv
 	for bit in 48 49 50 52 53; do sgdisk -A 1:set:$bit $W/disk.img > /dev/null; done
 	sgdisk -A 2:set:54 $W/disk.img > /dev/null
 	DARWIN_START=$(sgdisk -i 3 $W/disk.img | awk '/First sector/ {print $3}')
+	# boot_a holds HackiOS's image (a boot image header v1 named HACKiOS, as mkxnuimg.py makes it), boot_b an
+	# Android one (header v4, no name): how the loader tells its own slot
+	python3 -c "import struct, sys
+h = bytearray(4096); h[:8] = b'ANDROID!'; struct.pack_into('<I', h, 40, 1); h[48:55] = b'HACKiOS'
+a = bytearray(4096); a[:8] = b'ANDROID!'; struct.pack_into('<I', a, 40, 4)
+open('$W/boot-ours.img', 'wb').write(h); open('$W/boot-android.img', 'wb').write(a)"
+	dd if=$W/boot-ours.img of=$W/disk.img bs=512 seek=2048 conv=notrunc status=none
+	dd if=$W/boot-android.img of=$W/disk.img bs=512 seek=$(sgdisk -i 2 $W/disk.img | awk '/First sector/ {print $3}') conv=notrunc status=none
 }
 
 put() {         # put FILE BLOCK: into darwin at 4 KiB block BLOCK
@@ -136,6 +146,14 @@ s = f.parse_state(sys.stdin.buffer.read()); sys.exit(0 if s and s['flags'] & f.S
 		disk; slot $W/gen1.img 0; slot $W/gen2.img 1; state 2 0 2 0 2
 		run $L "" "ab: slots exchanged|ab: not exactly|ab: no unit|flash: booting slot"
 		expect remembered "menu: Android \(countdown\)" "ab: slots exchanged" "!booting slot" ;;
+	not-ours)
+		disk; slot $W/gen1.img 0
+		# Android's slot _b active, ours _a inactive
+		for bit in 50; do sgdisk -A 1:clear:$bit $W/disk.img > /dev/null; sgdisk -A 2:set:$bit $W/disk.img > /dev/null; done
+		before=$(ab)
+		run $L "$DOWN$ENTER" "Android's slot is the active one|ab: slots exchanged|ab: not exactly|ab: no unit|nothing written"
+		expect not-ours "Android's slot is the active one already" "!ab: slots exchanged"
+		[ "$(ab)" = "$before" ] || { echo "   the A/B bytes changed: $(ab)"; FAIL=$((FAIL+1)); FAILED="$FAILED not-ours-ab"; } ;;
 	tampered)
 		disk; cp $W/gen2.img $W/bad.img
 		printf 'X' | dd of=$W/bad.img bs=1 seek=$((4096 + 5000)) conv=notrunc status=none
@@ -165,7 +183,7 @@ s = f.parse_state(sys.stdin.buffer.read()); sys.exit(0 if s and s['flags'] & f.S
 	esac
 }
 
-ALL="boot previous guard fallback android remembered tampered signed forged"
+ALL="boot previous guard fallback android remembered not-ours tampered signed forged"
 [ $# -gt 0 ] || set -- $ALL
 for s in "$@"; do scenario "$s"; done
 echo "qemu-test: $PASS passed, $FAIL failed${FAILED:+:$FAILED}"

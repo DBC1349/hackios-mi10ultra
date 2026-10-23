@@ -463,6 +463,24 @@ ab_find(struct ab_gpt *g, uint8_t *header)
 static uint8_t ab_primary[512], ab_backup[512];
 
 /*
+ * Does entry k's partition hold HackiOS's own boot image -- the UEFI with this loader, which mkxnuimg.py
+ * makes with board name "HACKiOS" (an Android boot image of header version 0..2 has its name at byte 48;
+ * one of version 3 or 4 has no name there at all)? Read through the same unit as the GPT.
+ */
+static int
+ab_is_ours(const struct ab_gpt *g, const uint8_t *table, int k)
+{
+	static uint8_t head[4096] __attribute__((aligned(4096)));
+	uint64_t first = *(const uint64_t *)(table + k * g->esize + 32);
+	static const char want[8] = { 'H', 'A', 'C', 'K', 'i', 'O', 'S', 0 };
+
+	if (g->bs > sizeof(head) || EFI_ERROR(g->bio->read_blocks(g->bio, g->bio->media->media_id, first, g->bs, head))) {
+		return 0;
+	}
+	return memcmp(head, "ANDROID!", 8) == 0 && *(const uint32_t *)(head + 40) <= 2 && memcmp(head + 48, want, 8) == 0;
+}
+
+/*
  * Make the other slot active: exchange the A/B bytes of boot_a and boot_b, in the backup GPT and then
  * the primary one. Returns 1 when both tables were written and read back right.
  */
@@ -482,6 +500,26 @@ ab_switch_back(void)
 	if (((ba & AB_ACTIVE) != 0) == ((bb & AB_ACTIVE) != 0)) {
 		print("ab: not exactly one slot is active: nothing written\n");
 		return 0;
+	}
+	/*
+	 * Only the slot that holds HackiOS's image is given away. Started any other way -- `fastboot boot` of the
+	 * same image, with Android's slot the active one -- exchanging the bytes would make the wrong slot active;
+	 * then Android's slot already is, and a reset is all it takes.
+	 */
+	{
+		int ours_a = ab_is_ours(&g, tab, g.a), ours_b = ab_is_ours(&g, tab, g.b);
+		int ours_active = (ours_a && (ba & AB_ACTIVE)) || (ours_b && (bb & AB_ACTIVE));
+
+		if (ours_a == ours_b) {
+			print("ab: %s HackiOS's image: nothing written (`fastboot --set-active` instead)\n",
+			    ours_a ? "both boot partitions hold" : "neither boot partition holds");
+			return 0;
+		}
+		if (!ours_active) {
+			print("ab: Android's slot is the active one already (HackiOS was not started from its own slot): "
+			    "nothing written, a reset starts Android\n");
+			return 1;
+		}
 	}
 	memcpy(tab2, tab, g.read);                       /* the primary table, kept while the backup is read */
 	gb = g;
