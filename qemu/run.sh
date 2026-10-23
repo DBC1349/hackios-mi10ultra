@@ -15,11 +15,23 @@ cp "${QEMU_VARS:-/usr/share/edk2/aarch64/QEMU_VARS.fd}" vars.fd 2>/dev/null
 # the loader is the boot application of the little FAT volume QEMU makes of esp/:
 # the one built here, or else the one that comes with the repository
 L=../xnuloader/loader.efi; [ -f $L ] || L=../prebuilt/loader.efi
-mkdir -p esp/EFI/BOOT && cp -u $L esp/EFI/BOOT/BOOTAA64.EFI
-timeout "$T" qemu-system-aarch64 -M virt,gic-version=3 -cpu cortex-a76 -smp ${QEMU_SMP:-1} -m ${QEMU_MEM:-6G} \
-  -accel tcg,tb-size=${QEMU_TB_MB:-384} \
-  -drive if=pflash,format=raw,readonly=on,file="$EFI" \
-  -drive if=pflash,format=raw,file=vars.fd \
-  -drive file=fat:rw:esp,format=raw,if=virtio \
-  -device loader,file=payload.bin,addr=0xF0000000,force-raw=on \
-  -display none -serial stdio -monitor none -no-reboot "$@" 2>&1
+mkdir -p esp/EFI/BOOT && { cmp -s $L esp/EFI/BOOT/BOOTAA64.EFI || cp $L esp/EFI/BOOT/BOOTAA64.EFI; }
+QEMU_BIN=${QEMU_BIN:-qemu-system-aarch64}
+if command -v timeout >/dev/null; then
+	timeout "$T" "$QEMU_BIN" -M virt,gic-version=3 -cpu cortex-a76 -smp ${QEMU_SMP:-1} -m ${QEMU_MEM:-6G} \
+	  -accel tcg,tb-size=${QEMU_TB_MB:-384} \
+	  -drive if=pflash,format=raw,readonly=on,file="$EFI" \
+	  -drive if=pflash,format=raw,file=vars.fd \
+	  -drive file=fat:rw:esp,format=raw,if=virtio \
+	  -device loader,file=payload.bin,addr=0xF0000000,force-raw=on \
+	  -display "${QEMU_DISPLAY:-none}" -serial stdio -monitor none -no-reboot "$@" 2>&1
+else
+	# no GNU timeout (e.g. macOS): perl alarm provides the same session limit
+	perl -e 'alarm shift; exec @ARGV' "$T" "${QEMU_BIN:-qemu-system-aarch64}" -M virt,gic-version=3 -cpu cortex-a76 -smp ${QEMU_SMP:-1} -m ${QEMU_MEM:-6G} \
+	  -accel tcg,tb-size=${QEMU_TB_MB:-384} \
+	  -drive if=pflash,format=raw,readonly=on,file="$EFI" \
+	  -drive if=pflash,format=raw,file=vars.fd \
+	  -drive file=fat:rw:esp,format=raw,if=virtio \
+	  -device loader,file=payload.bin,addr=0xF0000000,force-raw=on \
+	  -display "${QEMU_DISPLAY:-none}" -serial stdio -monitor none -no-reboot "$@" 2>&1
+fi

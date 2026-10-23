@@ -3907,7 +3907,16 @@ ramfb_phone_screen(void)
 	dma.length = be32(sizeof(cfg));
 	dma.address = __builtin_bswap64((uint64_t)(uintptr_t)&cfg);
 	*(volatile uint64_t *)(FW_CFG_BASE + 16) = __builtin_bswap64((uint64_t)(uintptr_t)&dma);
-	if (dma.control != 0) {
+	/* the fw_cfg DMA is asynchronous on some hosts (macOS/ARM QEMU TCG in particular):
+	   racing it reads back the control word with the select/read-write bits still set
+	   and abandons a request QEMU is about to run. Poll until they clear (~10 ms cap) */
+	for (unsigned i = 0; i < 200; i++) {
+		uint32_t raw = *(volatile uint32_t *)&dma.control;
+		if ((be32(raw) & (FW_CFG_DMA_SELECT | FW_CFG_DMA_WRITE)) == 0)
+			break;
+		BS->stall(50);
+	}
+	if (be32(*(volatile uint32_t *)&dma.control) & (FW_CFG_DMA_SELECT | FW_CFG_DMA_WRITE)) {
 		print("ramfb: control %x after the request\n", (uint64_t)be32(dma.control));
 		return;
 	}

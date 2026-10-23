@@ -45,10 +45,12 @@ RAM_GB=${QEMU_RAM_GB:-7}
 RAM_SIZE=$((RAM_GB << 30)) FILE_SIZE=$((12 << 30))
 INSTANCE=${QEMU_INSTANCE:-$(cat qemu/instance 2>/dev/null || echo 0)}
 # an instance takes 2.5-3 GB of host memory; starting one that does not fit gets something killed
-AVAILABLE=$(awk '/^MemAvailable:/ { print int($2 / 1024) }' /proc/meminfo)
-if [ "${AVAILABLE:-9999}" -lt 3000 ] && [ -z "$QEMU_FORCE" ]; then
-	echo "run-ios.sh: only $AVAILABLE MB of memory available on this machine: stop another QEMU first (QEMU_FORCE=1 to start anyway)"
-	exit 1
+if [ -f /proc/meminfo ]; then
+	AVAILABLE=$(awk '/^MemAvailable:/ { print int($2 / 1024) }' /proc/meminfo)
+	if [ "${AVAILABLE:-9999}" -lt 3000 ] && [ -z "$QEMU_FORCE" ]; then
+		echo "run-ios.sh: only $AVAILABLE MB of memory available on this machine: stop another QEMU first (QEMU_FORCE=1 to start anyway)"
+		exit 1
+	fi
 fi
 
 if [ ! -f qemu/ram.img ] || [ "$IMG" -nt qemu/ram.img ]; then
@@ -58,9 +60,22 @@ src = os.open(sys.argv[1], os.O_RDONLY)
 dst = os.open(sys.argv[2], os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o644)
 offset, size = int(sys.argv[3]), int(sys.argv[4])
 os.ftruncate(dst, size)
-total, done = os.fstat(src).st_size, 0
-while done < total:
-    done += os.copy_file_range(src, dst, total - done, done, offset + done)
+total = os.fstat(src).st_size
+done = 0
+# copy_file_range is Linux-first; macOS may lack/limit it, so fall back to pwrite
+try:
+    while done < total:
+        done += os.copy_file_range(src, dst, total - done, done, offset + done)
+except (AttributeError, OSError):
+    os.ftruncate(dst, size)
+    done = 0
+    chunk = 1 << 24
+    while done < total:
+        n = os.pread(src, min(chunk, total - done), done)
+        if not n:
+            break
+        os.pwrite(dst, n, offset + done)
+        done += len(n)
 PY
 fi
 NET=()
@@ -70,7 +85,7 @@ if [ -n "$QEMU_NET" ] && [ "$QEMU_NET" != 0 ]; then
 fi
 # the sound device (QEMU 8.2 or newer has one for this machine): the kernel's sink for /dev/redwood-audio
 SOUND=()
-if qemu-system-aarch64 -device help 2>/dev/null | grep -q '"virtio-sound-device"'; then
+if "${QEMU_BIN:-qemu-system-aarch64}" -device help 2>/dev/null | grep -q '"virtio-sound-device"'; then
 	case "${AUDIO:-none}" in
 	*.wav) SOUND=(-audiodev "wav,id=snd,path=$(readlink -f "$AUDIO")") ;;
 	*) SOUND=(-audiodev "${AUDIO:-none},id=snd") ;;
@@ -78,7 +93,7 @@ if qemu-system-aarch64 -device help 2>/dev/null | grep -q '"virtio-sound-device"
 	SOUND+=(-device virtio-sound-device,audiodev=snd,streams=1)   # one stream: output, no microphone of the host
 	CMDLINE="virtio_sound=1 $CMDLINE"
 fi
-xnuloader/mkpayload.py -o qemu/payload.bin kernel=$K ramdisk=$ROOT --rdres "$(printf '%x' "$(stat -c %s "$IMG")")" \
+xnuloader/mkpayload.py -o qemu/payload.bin kernel=$K ramdisk=$ROOT --rdres "$(printf '%x' "$(stat -c %s "$IMG" 2>/dev/null || stat -f %z "$IMG")" )" \
 	--cmdline "loader_return_after=$SECS epoch=$(date +%s) virtio_input=1 $CMDLINE" >/dev/null || exit 1
 QEMU_MEM=${RAM_GB}G exec qemu/run.sh $((SECS + 40)) \
 	-object memory-backend-file,id=ram,size=$RAM_SIZE,mem-path="$PWD/qemu/ram.img",share=off \
