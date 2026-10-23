@@ -63,7 +63,7 @@ is_loader() { in_fastboot && fb getvar product | grep -q 'product: xnuloader'; }
 state() {
 	if is_loader; then echo loader
 	elif in_fastboot; then echo fastboot
-	elif [ "$(adb get-state 2>/dev/null)" = device ]; then echo android
+	elif [ "$(adb get-state 2>/dev/null | tr -d '\r')" = device ]; then echo android   # (adb.exe through WSL ends lines with \r)
 	else echo absent; fi
 }
 wait_for() { # wait_for <state> <seconds>

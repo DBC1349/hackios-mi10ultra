@@ -28,11 +28,12 @@ if [ -z "$SKIP_BUILD" ]; then
 	[ -d ios165/rootfs ] || die "no iOS files: ios165/fetch.sh first"
 	env $FLASH_USERLAND_VARS userland/build.sh
 fi
-[ -f userland/flashboot.apfs ] || die "no userland/flashboot.apfs (FLASHBOOT=1 userland/build.sh makes it)"
+[ -f userland/flashboot.apfs ] && [ -f userland/root.apfs ] || die "no userland/flashboot.apfs and root.apfs (FLASHBOOT=1 userland/build.sh makes them)"
 # signed with the owner key when there is one (common/flash/ownerkey.py); OWNER_KEY=file names another
 SIGN=; KEYFILE=${OWNER_KEY:-$HOME/.hackios/owner.key}; [ -f "$KEYFILE" ] && SIGN="--sign $KEYFILE"
 LABEL="$(git describe --tags --always 2>/dev/null || echo build) $(date +%Y-%m-%d)"
-python3 common/flash/mkbundle.py -o out/$DEVICE-bundle.img --kernel $K --ramdisk userland/flashboot.apfs \
+# flashboot.apfs is the root the kernel starts from (md0, resident), root.apfs the small image on /redwood (md1)
+python3 common/flash/mkbundle.py -o out/$DEVICE-bundle.img --kernel $K --resident userland/flashboot.apfs --ramdisk userland/root.apfs \
 	--cmdline "$FLASH_BOOTARGS" --label "$LABEL" $SIGN
 
 F=common/flash/flashctl.py

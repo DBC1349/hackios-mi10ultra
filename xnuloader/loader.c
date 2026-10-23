@@ -1968,6 +1968,13 @@ block_start(void)
 			    BLOCK_WRITE_FIRST);
 		}
 		block_bios[block_shared.parts++] = darwin_file_bio();
+		/* the kernel's copy of the map: the host is userdata's entry in this table */
+		for (uint32_t k = 0; k < block_shared.parts; k++) {
+			if (str_eq(block_shared.part[k].name, DARWIN_FILE_HOST) && !(block_shared.part[k].flags & BLOCK_PART_UNIT)) {
+				darwin_file_publish(k);
+				break;
+			}
+		}
 	}
 	for (uint64_t u = 0; u < nunits; u++) {
 		struct loader_block_part *bp = &block_shared.part[block_shared.parts];
@@ -2523,6 +2530,8 @@ struct payload_info {
 	const uint8_t *kernel;
 	const uint8_t *ramdisk;
 	uint32_t ramdisk_size;
+	const uint8_t *resident;        /* "resident": an image to put at the resident address (a bundle of the flash) */
+	uint32_t resident_size;
 	const char *cmdline;
 	uint64_t checkpoint;
 	uint64_t forced_base;
@@ -2565,7 +2574,12 @@ parse_payload(struct payload_info *pi, int verbose)
 		if (verbose) {
 			print("payload entry '%s' size %x\n", e->name, (uint64_t)e->size);
 		}
-		if (str_eq(e->name, "ramdisk")) {
+		if (str_eq(e->name, "resident")) {
+			/* what `xl ramdisk` uploads over USB, carried by the payload instead: an installed phone's boot
+			 * bundle has no computer to upload it (common/flash/mkbundle.py --resident) */
+			pi->resident = p + sizeof(*e);
+			pi->resident_size = e->size;
+		} else if (str_eq(e->name, "ramdisk")) {
 			pi->ramdisk = p + sizeof(*e);             /* becomes /dev/md0, the root device */
 			pi->ramdisk_size = e->size;
 		} else if (str_eq(e->name, "kernel")) {
@@ -2820,6 +2834,19 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	if (pi.resident_rd != 0) {
 		resident_rd_size = pi.resident_rd;
 	}
+	if (pi.resident != NULL && pi.resident_size != 0) {
+		uint64_t res_pa = phys_base + RESIDENT_RD_OFFSET, n = pi.resident_size;
+
+		/* the payload holding it must not lie where it goes (in QEMU both are ordinary RAM) */
+		if (res_pa < PAYLOAD_BASE + PAYLOAD_MAX_SIZE && PAYLOAD_BASE < res_pa + n) {
+			print("the resident image's place overlaps the payload: not booted\n");
+			return 0;
+		}
+		memcpy((void *)res_pa, pi.resident, n);
+		clean_dcache(res_pa, res_pa + n);
+		resident_rd_size = n;
+		print("resident image from the payload: %d bytes at pa %x\n", n, res_pa);
+	}
 	if (resident_rd_size != 0) {
 		uint64_t res_pa = phys_base + RESIDENT_RD_OFFSET;
 		uint64_t res_size = (resident_rd_size + PAGE_SIZE_MAX - 1) & ~(PAGE_SIZE_MAX - 1);
@@ -3022,6 +3049,20 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		static const char prefix[] = "ufs_shared_pa=0x";
 		static const char hex[] = "0123456789abcdef";
 		uint64_t address = (uint64_t)(uintptr_t)&block_shared;
+
+		for (const char *c = prefix; *c && n < BOOT_LINE_LENGTH - 1; c++) {
+			ba->commandLine[n++] = *c;
+		}
+		for (int shift = 60; shift >= 0 && n < BOOT_LINE_LENGTH - 1; shift -= 4) {
+			ba->commandLine[n++] = hex[(address >> shift) & 0xf];
+		}
+		if (n < BOOT_LINE_LENGTH - 1) ba->commandLine[n++] = ' ';
+	}
+	if (block_enabled && df_state > 0 && df_map.magic != 0) {
+		/* darwin as a file: where its map is, for the kernel's own UFS driver (darwinfile.c) */
+		static const char prefix[] = "darwin_map_pa=0x";
+		static const char hex[] = "0123456789abcdef";
+		uint64_t address = (uint64_t)(uintptr_t)&df_map;
 
 		for (const char *c = prefix; *c && n < BOOT_LINE_LENGTH - 1; c++) {
 			ba->commandLine[n++] = *c;

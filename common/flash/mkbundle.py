@@ -24,6 +24,7 @@ ap.add_argument('-o', '--output', required=True)
 ap.add_argument('--kernel', required=True)
 ap.add_argument('--ramdisk', required=True)
 ap.add_argument('--cmdline', default='')
+ap.add_argument('--resident', default=None, help="the image `xl ramdisk` would upload (md0; the --ramdisk is then md1)")
 ap.add_argument('--generation', type=int, default=None, help='default: seconds since 1970 (newer wins)')
 ap.add_argument('--label', default=None, help='shown in the boot menu (default: the date)')
 ap.add_argument('--sign', nargs='?', const=ownerkey.DEFAULT, default=None, metavar='KEYFILE',
@@ -33,7 +34,8 @@ args = ap.parse_args()
 with tempfile.TemporaryDirectory() as td:
     cont = os.path.join(td, 'payload.bin')
     subprocess.check_call([sys.executable, os.path.join(ROOT, 'xnuloader', 'mkpayload.py'), '-o', cont,
-                           f'kernel={args.kernel}', f'ramdisk={args.ramdisk}', '--cmdline', args.cmdline],
+                           f'kernel={args.kernel}', f'ramdisk={args.ramdisk}'] +
+                          ([f'resident={args.resident}'] if args.resident else []) + ['--cmdline', args.cmdline],
                           stdout=subprocess.DEVNULL)
     data = open(cont, 'rb').read()
 if len(data) > PAYLOAD_LIMIT or len(data) > (fmt.SLOT_BLOCKS - 1) * fmt.BLOCK:

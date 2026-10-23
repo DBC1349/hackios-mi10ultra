@@ -29,6 +29,22 @@ static efi_block_media df_media;
 static uint64_t df_start[DARWIN_FILE_EXTENTS];  /* darwin's first block in each extent */
 static int df_state;                            /* 0 not tried, 1 there, -1 not there */
 
+/*
+ * The map as the kernel reads it (bsd/dev/redwood_ufs.c, darwin_map_pa= on its command line): with
+ * ufs_native=1 the kernel reads the storage through its own driver, LUN by LUN, and darwin -- on no unit of
+ * its own -- through this, along the extents of the host partition (part[host] of the block service's
+ * table). Written once before the kernel starts; one page, in the loader's memory, which stays.
+ */
+#define DF_MAP_MAGIC    0x3130504d4444484bULL   /* "HKDDMP01" */
+struct df_map {
+	uint64_t magic;
+	uint32_t count, host;                   /* extents; the host partition's index in the block service's table */
+	uint64_t blocks;                        /* darwin's, of 4 KB */
+	uint64_t sum;                           /* DARWIN_FILE_SUM: the kernel checks it against the extents below */
+	struct { uint64_t at, count; } ext[DARWIN_FILE_EXTENTS];  /* in the host's 4 KB blocks, in darwin's order */
+};
+static struct df_map df_map __attribute__((aligned(0x2000)));     /* (8 KB: as far as this target aligns; the kernel maps the 16 KB pages around it) */
+
 static uint64_t
 df_sum(void)
 {
@@ -187,8 +203,27 @@ darwin_file_bio(void)
 	return &df_bio;
 }
 
+/* fill the kernel's copy of the map (block_start, once the host's index in the table is known) */
+static void
+darwin_file_publish(uint32_t host)
+{
+	df_map.magic = DF_MAP_MAGIC;
+	df_map.count = DARWIN_FILE_EXTENTS;
+	df_map.host = host;
+	df_map.blocks = DARWIN_FILE_BLOCKS;
+	df_map.sum = DARWIN_FILE_SUM;
+	for (int i = 0; i < DARWIN_FILE_EXTENTS; i++) {
+		df_map.ext[i].at = darwin_file_extents[i].at;
+		df_map.ext[i].count = darwin_file_extents[i].count;
+	}
+	clean_dcache((uint64_t)(uintptr_t)&df_map, (uint64_t)(uintptr_t)&df_map + sizeof(df_map));
+}
+
 #else
 
+static int df_state;
+static struct { uint64_t magic; } df_map;
+static void darwin_file_publish(uint32_t host) { (void)host; }
 #define DARWIN_FILE_BLOCKS 0ULL                 /* (darwin is a partition: block_start never asks) */
 #define DARWIN_FILE_HOST ""
 
