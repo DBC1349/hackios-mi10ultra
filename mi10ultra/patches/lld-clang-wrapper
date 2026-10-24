@@ -1,0 +1,16 @@
+#!/bin/bash
+# xnu-clang variant: links with LLVM lld (ld64.lld) which reads the SDK's .tbd stubs.
+# The cctools ld64 built here has no TAPI_SUPPORT, so it cannot read .tbd at all.
+HB=/root/hackios/hackios-xnu-kernel-umi/xnu-deps/host/bin
+case "$(basename "$0")" in *++) drv=clang++; extra=(-fno-use-cxa-atexit);; *) drv=clang; extra=();; esac
+args=()
+for a in "$@"; do
+  case "$a" in
+    -enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang) ;;
+    -fapple-kext-vtable-verify|-Wno-vla-cxx-extension) ;;
+    -Werror|-Werror=*|-Weverything|-pedantic-errors) ;;
+    *) args+=("$a");;
+  esac
+done
+exec /usr/bin/$drv -include "$HB/../../hostinc/xnu_clang_compat.h" -target arm64-apple-ios${XNU_SDK_VERSION:-16.5} \
+  -fuse-ld=lld -w "${extra[@]}" "${args[@]}"

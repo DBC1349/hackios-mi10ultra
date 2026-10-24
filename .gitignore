@@ -80,3 +80,7 @@ __pycache__/
 !/xnu-deps/build/lzbitmap/libzbitmap.c
 !/xnu-deps/build/lzbitmap/libzbitmap.h
 /tools/android/f2fs-resize
+
+# the cas port lives here on purpose
+!mi10ultra/
+!mi10ultra/**
