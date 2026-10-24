@@ -12,6 +12,8 @@ T=${1:-20}; shift
 EFI=${QEMU_EFI:-/usr/share/edk2/aarch64/QEMU_EFI.fd}
 [ -f "$EFI" ] || { echo "run.sh: no UEFI firmware at $EFI (set QEMU_EFI and QEMU_VARS)"; exit 1; }
 cp "${QEMU_VARS:-/usr/share/edk2/aarch64/QEMU_VARS.fd}" vars.fd 2>/dev/null
+# (a firmware file read-only in its place, as in the Nix store, would leave the copy read-only and QEMU could not open it)
+[ -f vars.fd ] && chmod u+w vars.fd
 # the loader is the boot application of the little FAT volume QEMU makes of esp/:
 # the one built here, or else the one that comes with the repository
 L=../xnuloader/loader.efi; [ -f $L ] || L=../prebuilt/loader.efi
