@@ -1508,6 +1508,7 @@ ufs_survey(void)
 #define BLOCK_MAX_PARTS    160
 #define BLOCK_MAX_UNITS    16
 #define BLOCK_PART_UNIT    1u                          /* the entry is a whole logical unit, not a partition */
+#define BLOCK_PART_VIRTUAL 2u                          /* darwin as a file of userdata (darwinfile.c): on no unit of its own */
 #define BLOCK_OP_READ      0u
 #define BLOCK_OP_WRITE     1u
 
@@ -1520,10 +1521,13 @@ ufs_survey(void)
  * same partition, named the same, of the same size, in the same place, on logical unit 0.
  */
 #define BLOCK_WRITE_FIRST  2042368ULL                  /* darwin's blocks of 4096: past both cryptexes */
-#define BLOCK_DARWIN_FIRST 25374720ULL                 /* its first and last LBA of unit 0, as the GPT has them */
-#define BLOCK_DARWIN_LAST  30617594ULL
+/*
+ * Where darwin is on this phone: a file of userdata (kind "file" in darwin_file.json,
+ * common/flash/darwinid.py), turned into this header. DARWIN_FILE is 1 and the partition
+ * values are 0 (unused); the code that checks a partition still compiles.
+ */
+#include "darwin_identity.h"
 #define BLOCK_DARWIN_TYPE  { 0x7c3457ef, 0x0000, 0x11aa, { 0xaa, 0x11, 0x00, 0x30, 0x65, 0x43, 0xec, 0xac } }
-#define BLOCK_DARWIN_UNIQ  { 0xfd6854ad, 0x24aa, 0x4fc3, { 0x94, 0xfe, 0x29, 0x01, 0x16, 0x85, 0x8d, 0x68 } }
 
 /*
  * The partitions first, then the logical units they are on (BLOCK_PART_UNIT, named unit0, unit1,
@@ -1842,6 +1846,8 @@ hc_init(void)
  * The firmware's configuration tables, by GUID (an ACPI or device tree table among them would say
  * where the storage controller is).
  */
+#include "darwinfile.c"
+
 static void
 block_tables(void)
 {
@@ -1973,6 +1979,32 @@ block_start(void)
 		if (block_probe_requested && bp->name[0] == 'd' && bp->name[1] == 'a' && bp->name[2] == 'r' &&
 		    bp->name[3] == 'w' && bp->name[4] == 'i' && bp->name[5] == 'n' && bp->name[6] == 0) {
 			block_io2_probe(handles[i], bio);
+		}
+	}
+	/* darwin as a file of userdata: a partition of its own blocks, on no unit (the kernel reads it through here) */
+	if (darwin_file_bio() != NULL && block_shared.parts + nunits < BLOCK_MAX_PARTS) {
+		struct loader_block_part *bp = &block_shared.part[block_shared.parts];
+		static const char darwin_name[] = "darwin";
+
+		memcpy(bp->name, darwin_name, sizeof(darwin_name));
+		bp->block_size = 4096;
+		bp->blocks = DARWIN_FILE_BLOCKS;
+		bp->start_lba = 0;
+		bp->unit = 0xffff;
+		bp->lun = 0xff;
+		bp->flags = BLOCK_PART_VIRTUAL;
+		if (block_write_requested) {
+			block_write_part = (int)block_shared.parts;
+			print("ufs: darwin (a file of %s): its blocks from %d on may be written this run\n", DARWIN_FILE_HOST,
+			    BLOCK_WRITE_FIRST);
+		}
+		block_bios[block_shared.parts++] = darwin_file_bio();
+		/* the kernel's copy of the map: the host is userdata's entry in this table */
+		for (uint32_t k = 0; k < block_shared.parts; k++) {
+			if (str_eq(block_shared.part[k].name, DARWIN_FILE_HOST) && !(block_shared.part[k].flags & BLOCK_PART_UNIT)) {
+				darwin_file_publish(k);
+				break;
+			}
 		}
 	}
 	for (uint64_t u = 0; u < nunits; u++) {
@@ -3037,6 +3069,20 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		}
 		if (n < BOOT_LINE_LENGTH - 1) ba->commandLine[n++] = ' ';
 	}
+	if (block_enabled && df_state > 0 && df_map.magic != 0) {
+		/* darwin as a file: where its map is, for the kernel's own UFS driver (darwinfile.c) */
+		static const char prefix[] = "darwin_map_pa=0x";
+		static const char hex[] = "0123456789abcdef";
+		uint64_t address = (uint64_t)(uintptr_t)&df_map;
+
+		for (const char *c = prefix; *c && n < BOOT_LINE_LENGTH - 1; c++) {
+			ba->commandLine[n++] = *c;
+		}
+		for (int shift = 60; shift >= 0 && n < BOOT_LINE_LENGTH - 1; shift -= 4) {
+			ba->commandLine[n++] = hex[(address >> shift) & 0xf];
+		}
+		if (n < BOOT_LINE_LENGTH - 1) ba->commandLine[n++] = ' ';
+	}
 	if (battery_requested) {
 		static const char prefix[] = "battery_shared_pa=0x";
 		static const char hex[] = "0123456789abcdef";
@@ -3098,6 +3144,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	 * (touch/keys/sound/...) gate themselves on this property.
 	 */
 	dt_prop_str(&w, "hackios-board", plat->name);
+	dt_prop_str(&w, "hakios-board", plat->name);   /* the rebased upstream drivers read this one */
 	/* the time now, by the firmware's clock (the kernel has no real-time clock driver) */
 	uint64_t epoch = firmware_epoch();
 	if (epoch != 0) {

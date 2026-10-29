@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.hackios.varstore</string>
+	<!-- with var_store=1 among the kernel's arguments: stays for the run and writes /private/var into
+	     the flash when the kernel says the run is ending (src/var_store.c, watch); without, it ends at
+	     once. The "60" is seconds between saves of its own accord as well, so a run that is cut short
+	     (a hard reset instead of "oem stop") loses at most the last minute rather than everything.
+	     These saves carry only the metadata and each file's block list, not the file data, so they are
+	     small and quick beside the one at the end of the run. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/hackios/bin/var_store</string>
+		<string>watch</string>
+		<string>600</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/dev/console</string>
+	<key>StandardErrorPath</key>
+	<string>/dev/console</string>
+</dict>
+</plist>

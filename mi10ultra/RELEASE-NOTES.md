@@ -1,65 +1,57 @@
-# HackiOS on Xiaomi Mi 10 Ultra (cas) — 已验证可用版本
+# HackiOS on Xiaomi Mi 10 Ultra (cas) — 最新进展版
 
 把 Apple **XNU 内核 + iOS 16.5 userland** 移植到**小米10至尊纪念版（cas / SM8250 / kona）**。
-本 Release 是**真机验证跑通**的那一套（不是实验版）。
+本 Release 是 `Xiaomi-mi10ultra` 分支的最新快照，在 2026-10-24「触摸 + GPU」版本基础上新增了
+**中文、完整外设驱动、数据持久化、UFS 大容量数据卷（实验性）**。
 
-## 已验证（真机，2026-10-24）
+## 已验证（真机）
 
 | 项 | 结果 |
 |---|---|
-| iOS 16.5 启动到桌面 | ✅ SpringBoard 主屏、小组件、Dock 全部正常 |
-| **触摸** | ✅ ST FTS521，`poll=11875 events=2758 errors=0`（零错误） |
-| **GPU 硬件渲染** | ✅ Adreno 650 完整 bring-up（GMU/zap/SMMU/587MHz），CoreAnimation 走 `Mesa 25.0.7 FD650` |
+| iOS 16.5 启动到桌面 | ✅ SpringBoard 主屏、小组件、Dock 正常 |
+| 触摸 | ✅ ST FTS521（2758 事件、0 错误） |
+| GPU 硬件渲染 | ✅ Adreno 650 完整 bring-up（GMU/zap/SMMU/587MHz），CoreAnimation 走 Mesa 25.0.7 FD650 |
+| **中文** | ✅ 语言包 + 完整 PingFang 字体（78MB 未裁剪，5600 条 zh 条目）进 system 镜像 |
+| WiFi / 蓝牙 | ✅ QCA6390、H4 TLV 固件加载、station ready |
+| 声音 / 震动 / 电池 / 充电 | ✅ ADSP、AW8697、BQ28Z610 + BQ25790 充电控制 |
+| **数据持久化** | ✅ `var_store=1 ufs_write=1`：/private/var 关机打包到 darwin，重启恢复（照片不丢） |
 | 全程不写分区 | ✅ 纯 `fastboot boot` 内存启动 |
 
-## 资产
+## 实验性 / 未完成
 
-| 文件 | 说明 |
+| 项 | 状态 |
 |---|---|
-| `cas-touch2.img` | **启动镜像**：cas UEFI（自建，含 cas 自身 XBL 提取的驱动）+ 我们的 loader（已把板卡标识设为 `umi`，触摸门控放行） |
-| `cas-umiloader.img` | 备用启动镜像：cas UEFI + umi 官方 loader |
-| `run-payload-gpu-wifi.bin` | **内核 payload**（本版本验证对象：kernel + root.apfs + 启动参数 `gpu=1 wifi=1 umi_touch=1 umi_keys=1`） |
-| `mach.development.bcm2837.verified` | 从上面 payload 中提取的**内核本体**（15.2MB） |
-| `root.apfs` | 小镜像（含 Mesa GL 库与 `fw/` 固件） |
-| `libOSMesa.8.dylib` / `libhackios-gl.dylib` | Mesa 25.0.7（freedreno FD650 + softpipe）GL 实现 |
-| `firmware/fw-gpu/` | A650 固件（`a650_gmu.bin`/`a650_sqe.fw`/`a650_zap.mdt`+`b00..b02`） |
-| `firmware/fw-wifi/qca6390/` | QCA6390 WiFi 固件（`amss20.bin` 等 54 个） |
-| `firmware/fw-haptic/` | AW8697 触觉固件 |
+| **UFS 大容量数据卷（128G）** | ⚠️ 已打通 `darwin_file=1` 的 128G 文件承载 + `ufs_var` 页落盘，容量可显示 128G；**但同步页 I/O 导致多数 App 卡死**，默认回退到内存数据卷（3G）。代码都在，待优化缓存/异步写回 |
+| **CS35L41 扬声器** | ⚠️ 固件已从本机 vendor 提取（`fw-audio/cs35l41/`，HALO v4.3 / WMDR v1 校验通过），`hk_speaker.c` 驱动已就位，但 DSP 算法头解析未调通，输出保持禁用 |
+| 独立启动（flash_root） | ❌ `common/flash/` 工具在树里，未启用 |
 
-> 需要 2.4GB 的 `system.apfs`（系统镜像）：用 userland 仓库 `build.sh` 重建，或使用对应工作区的产物。
+## 目录（分支 `Xiaomi-mi10ultra`）
 
-## 怎么用
-
-```sh
-# 1) 进 bootloader，内存启动 UEFI+loader（不写任何分区）
-adb reboot bootloader
-fastboot boot cas-touch2.img
-
-# 2) 用 WinUsb 常驻 daemon（见源码包 scripts/windows/）
-#    依次发送：ramdisk → stage <system.apfs> → stage run-payload-gpu-wifi.bin → run
-
-# 3) 检查
-#    getvar result 应回 OKAYrunning 0 0；触摸可用；界面由 GPU 渲染
+```
+mi10ultra/
+  README.md            本移植指南
+  RELEASE-NOTES.md     本文件
+  cas-device/cas.conf  cas 设备配置
+  loader/              我们自己的 EFI loader（platform_cas + darwin_file + mkpayload）
+  kernel/              cas 内核驱动（hk_*.c / umi_*.c / ramfs.c / loader_return.c ...），
+                       覆盖到 hackios-xnu-kernel 的 xnu/files/ 即可编译
+  userland/            var_store.c / init.c / mini.* / varstore plist（覆盖到 hackios-xnu-userland）
+  patches/             TzDxeLA 补丁、RPMh cmd-db dump、GPU terse、lld 包装等修复脚本
+  scripts/             WinUsb daemon 与构建链脚本
+  docs/                全部移植报告
 ```
 
 ## 关键前提（缺一不可）
 
-1. 手机的 `TzDxeLA.efi` 必须已打补丁（`0xd469`: 0→1），否则 UEFI 启动 2 秒即崩回 fastboot
-2. 内核必须**自行编译**（仓库里的 prebuilt 不含 umi 触摸驱动）
-3. loader 必须传 `/chosen/hackios-board = "umi"`（触摸/按键等驱动的门控条件）
-4. USB 接 **USB 3.0 口**（USB 2.0 口会导致 loader 枚举失败）
-5. 构建 userland 时必须 `DEVICE=umi`，否则 WiFi 固件不会进镜像
-
-## 已知未完成
-
-- **WiFi**：QCA6390 PCIe 枚举失败（`errno=0x13`）。根因已定位：cas 的 RPMh cmd-db 中不存在驱动所需的 `smpf2` 电源轨（`smpa4`/`smpa6` 存在），需按 cas 实际轨名修改 `xnu/files/bsd/dev/umi_rpmh.c` 的 `rails[]`
-- 显示：当前 TE 60.3Hz + 偶发长帧
-- 音频/触觉/Metal：驱动与固件就位，未启用
+1. 手机 `TzDxeLA.efi` 必须打补丁（`0xd469`: 0→1），否则 UEFI 启动 2 秒崩回 fastboot
+2. loader 必须传 `/chosen/hackios-board = "umi"`（触摸/按键等驱动门控）
+3. USB 接 **USB 3.0 口**（USB 2.0 会导致 loader 枚举失败）
+4. 构建 userland 必须 `DEVICE=umi`（否则 WiFi 固件不入镜像）
 
 ## 来源与致谢
 
-- 移植方法与驱动：**hackios / Project Silicium** 生态，以及用户提供的
-  `JopangJovan/hackios-xnu-kernel-umi`、`hackios-xnu-userland-umi`（真机验证：小米10）
-- cas 专属资料：全部从本机手机自身提取（DTB、XBL 驱动、UEFI 固件、A650/QCA6390/ADSP/AW8697 固件）
+- 移植方法与驱动：hackios / Project Silicium 生态，`JopangJovan/hackios-xnu-kernel-umi`、
+  `hackios-xnu-userland-umi`（真机验证：小米10）
+- cas 专属资料：全部从本机手机自身提取（DTB、XBL 驱动、UEFI 固件、A650/QCA6390/ADSP/AW8697/CS35L41 固件）
 
 > 仅供研究自用。iOS 系统文件与厂商固件版权归各自所有者，请勿再分发。
