@@ -41,6 +41,20 @@ mi10ultra/
   docs/                全部移植报告
 ```
 
+## 系统镜像（自行重建，本 release 不附带）
+
+系统镜像 `system-zh-full.apfs`（2.4GB，含中文语言包 + 完整 PingFang 字体）超过 GitHub 单文件 2GB 上限，**本 release 不附带**，请自行生成：
+
+```sh
+# 在 hackios-xnu-userland 仓库（umi 线）：
+KEEP=1 DEVICE=umi REST=1 GL=1 ADSP=1 WIFID=1 BLUETOOTH=1 RC_JOBS=rc.jobs.umi-boot ./userland/build.sh
+# ios165/fetch.sh 会从 Apple CDN 下载 iOS 16.5 IPSW 并提取
+# 产物：system.apfs（中文版，2,561,617,920 字节）
+```
+
+> 中文已内置在提取脚本里：`ios165/select-system.py` 的 `KEEP_LANG` 含 zh-Hans/zh-Hant/zh_CN/zh_TW/zh_HK；
+> `ios165/fetch.sh` 已注释 PingFang 裁剪（保留完整 78MB 字体，避免缺字方框）。
+
 ## 关键前提（缺一不可）
 
 1. 手机 `TzDxeLA.efi` 必须打补丁（`0xd469`: 0→1），否则 UEFI 启动 2 秒崩回 fastboot
